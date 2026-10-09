@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# agentic-ode-system
+.env
+runs/*
+!runs/20261009-201921/
