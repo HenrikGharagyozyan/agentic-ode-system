@@ -18,11 +18,26 @@ def _print_turn(turn: Turn) -> None:
     print(f"[{turn['role']}] {turn['content']}\n", flush=True)
 
 
+def _ask(payload: dict) -> str:
+    """Show the graph's question to the person and read the reply. End of input (Ctrl-D) gives "" = refuse."""
+    kind = payload.get("kind") or "none"
+    print(f" HUMAN INPUT NEEDED ({kind}) ".center(75, "="))
+    print(payload.get("question") or "(the orchestrator gave no question text)")
+    if kind == "hard":
+        print('(Start your answer with "yes" to accept. Anything else refuses.)')
+    print("=" * 75, flush=True)
+    try:
+        return input("your reply> ")
+    except EOFError:
+        print()
+        return ""
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     from agentic_ode.runner import run_task
 
     try:
-        outcome = run_task(args.task, Settings.from_env(), on_turn=_print_turn)
+        outcome = run_task(args.task, Settings.from_env(), on_turn=_print_turn, ask=_ask)
     except ConfigurationError as e:
         print(f"configuration error: {e}", file=sys.stderr)
         return 2
