@@ -79,7 +79,11 @@ class Orchestrator:
 
         decision = self._decide_respecting_guard(state)
         allowed = finish_allowed(state)
-        if decision.next == FINISH and allowed:
+        refused = state.get("refused_step", "")
+        if refused and decision.next == refused:
+            # The model kept choosing the step the human just refused; stop so that step never runs.
+            route, stop = END_ROUTE, f"guard: the model chose the refused step '{refused}' again"
+        elif decision.next == FINISH and allowed:
             route, stop = END_ROUTE, "finish"
         elif decision.next == FINISH:
             # The model kept choosing finish against the guard; stop without claiming a result.
@@ -93,10 +97,11 @@ class Orchestrator:
             "route": route,
             "stop_reason": stop,
             "pending_step": decision.proposed_next if decision.next == HUMAN and decision.kind == "hard" else "",
+            "refused_step": "",  # the block lasts for this one decision only
         }
 
     def _decide_respecting_guard(self, state: DialogueState) -> Decision:
-        """Ask the model; if it finishes too early, ask again with a note (the next role is never hard-coded)."""
+        """Ask the model; if a guard blocks its choice, ask again with a note (the next role is never hard-coded)."""
         base = [
             SystemMessage(self.prompt),
             HumanMessage(
@@ -107,10 +112,20 @@ class Orchestrator:
         ]
         decision: Decision = self.decide.invoke(base)
         retries = 0
-        while decision.next == FINISH and not finish_allowed(state) and retries < self.settings.max_finish_retries:
+        # max_finish_retries limits the re-asks of both guards (finish guard and refused-step guard).
+        while (note := _guard_note(decision, state)) and retries < self.settings.max_finish_retries:
             retries += 1
-            log.info("finish blocked by guard, asking again (%d/%d)", retries, self.settings.max_finish_retries)
-            decision = self.decide.invoke(
-                base + [AIMessage(decision.as_turn()), HumanMessage(prompts.FINISH_NOT_ALLOWED)]
-            )
+            log.info("%s blocked by guard, asking again (%d/%d)", decision.next, retries,
+                     self.settings.max_finish_retries)
+            decision = self.decide.invoke(base + [AIMessage(decision.as_turn()), HumanMessage(note)])
         return decision
+
+
+def _guard_note(decision: Decision, state: DialogueState) -> str:
+    """The note to send back if a guard blocks this decision, or "" if the decision is allowed."""
+    refused = state.get("refused_step", "")
+    if refused and decision.next == refused:
+        return prompts.step_refused(refused)  # checked first: a refused finish stays blocked
+    if decision.next == FINISH and not finish_allowed(state):
+        return prompts.FINISH_NOT_ALLOWED
+    return ""
