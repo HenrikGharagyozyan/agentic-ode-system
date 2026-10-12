@@ -17,17 +17,33 @@ from agentic_ode.tools import last_rmse_line
 log = logging.getLogger(__name__)
 
 FINISH = "finish"
+HUMAN = "human"
 
 
 class Decision(BaseModel):
-    next: Literal["scientist", "general", "executor", "finish"] = Field(
-        description="The role that gets the next turn, or finish."
+    next: Literal["scientist", "general", "executor", "human", "finish"] = Field(
+        description="The role that gets the next turn, human to ask the person, or finish."
     )
-    instruction: str = Field(description="What that role should do now.")
+    instruction: str = Field(
+        description="What that role should do now. For human with kind hard: what the proposed step will do after a yes."
+    )
     reason: str = Field(description="One sentence: why this role now.")
+    kind: Literal["ambiguous", "hard", "none"] = Field(
+        default="none",
+        description="ambiguous: the request has more than one reading; hard: the next step needs approval; "
+        "none: next is not human.",
+    )
+    question: str = Field(default="", description="The question for the human. Empty unless next is human.")
+    proposed_next: Literal["executor", "finish", "none"] = Field(
+        default="none",
+        description="When kind is hard: the step that waits for approval (executor or finish). Otherwise none.",
+    )
 
     def as_turn(self) -> str:
-        return f"next: {self.next}\ninstruction: {self.instruction}\nreason: {self.reason}"
+        text = f"next: {self.next}\ninstruction: {self.instruction}\nreason: {self.reason}"
+        if self.next == HUMAN:
+            text += f"\nkind: {self.kind}\nproposed_next: {self.proposed_next}\nquestion: {self.question}"
+        return text
 
 
 def finish_allowed(state: DialogueState) -> bool:
@@ -68,6 +84,9 @@ class Orchestrator:
         elif decision.next == FINISH:
             # The model kept choosing finish against the guard; stop without claiming a result.
             route, stop = END_ROUTE, "finish refused by guard (no RMSE from a successful run)"
+        elif decision.next == HUMAN:
+            # Temporary: there is no human node yet, so stop and keep the question in the dialogue.
+            route, stop = END_ROUTE, "human input needed (no human node yet)"
         else:
             route, stop = decision.next, ""
         log.info("decision %d: %s (%s)", used + 1, decision.next, decision.reason)
