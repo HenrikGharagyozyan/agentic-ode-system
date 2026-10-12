@@ -1,4 +1,7 @@
-"""StateGraph: orchestrator routes to scientist / general / executor / human / END; all of them return to it."""
+"""StateGraph: orchestrator routes to scientist / general / executor / human / END; specialists return to it.
+
+After the person's reply, human runs the accepted step (executor or END) or returns to the orchestrator.
+"""
 
 from __future__ import annotations
 
@@ -37,5 +40,9 @@ def build_graph(llm, workdir: Path, settings: Settings | None = None):
     )
     for role in SPECIALISTS:
         g.add_edge(role.value, Role.ORCHESTRATOR.value)
-    g.add_edge(Role.HUMAN.value, Role.ORCHESTRATOR.value)  # for now always back to the orchestrator
+    g.add_conditional_edges(
+        Role.HUMAN.value,
+        route,
+        {Role.ORCHESTRATOR.value: Role.ORCHESTRATOR.value, Role.EXECUTOR.value: Role.EXECUTOR.value, END_ROUTE: END},
+    )
     return g.compile(checkpointer=InMemorySaver())
