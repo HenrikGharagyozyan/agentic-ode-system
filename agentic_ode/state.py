@@ -15,6 +15,7 @@ class Role(StrEnum):
     SCIENTIST = "scientist"
     GENERAL = "general"
     EXECUTOR = "executor"
+    HUMAN = "human"
 
 
 SPECIALISTS = (Role.SCIENTIST, Role.GENERAL, Role.EXECUTOR)
@@ -43,6 +44,7 @@ class DialogueState(TypedDict):
     runs: Annotated[list[RunRecord], operator.add]
     route: str  # next node chosen by the orchestrator, or END_ROUTE
     stop_reason: str
+    pending_step: str  # step that waits for the human's approval ("executor", "finish"), or ""
 
 
 def initial_state(user_message: str) -> DialogueState:
@@ -52,6 +54,7 @@ def initial_state(user_message: str) -> DialogueState:
         "runs": [],
         "route": "",
         "stop_reason": "",
+        "pending_step": "",
     }
 
 
