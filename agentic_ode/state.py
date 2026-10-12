@@ -16,6 +16,7 @@ class Role(StrEnum):
     GENERAL = "general"
     EXECUTOR = "executor"
     HUMAN = "human"
+    SYSTEM = "system"  # notes written by the graph itself, e.g. "the step did NOT run"
 
 
 SPECIALISTS = (Role.SCIENTIST, Role.GENERAL, Role.EXECUTOR)
@@ -45,6 +46,7 @@ class DialogueState(TypedDict):
     route: str  # next node chosen by the orchestrator, or END_ROUTE
     stop_reason: str
     pending_step: str  # step that waits for the human's approval ("executor", "finish"), or ""
+    refused_step: str  # step the human refused just now; the next orchestrator decision may not choose it
 
 
 def initial_state(user_message: str) -> DialogueState:
@@ -55,6 +57,7 @@ def initial_state(user_message: str) -> DialogueState:
         "route": "",
         "stop_reason": "",
         "pending_step": "",
+        "refused_step": "",
     }
 
 
