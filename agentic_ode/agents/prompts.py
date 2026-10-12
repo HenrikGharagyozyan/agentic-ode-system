@@ -22,12 +22,27 @@ The specialists:
 - scientist: owns the theory and the plan (differential equation, network, state equation, training, free-run test, numbered steps). No tools.
 - general: answers conceptual side questions. No tools, never writes the fitting plan.
 - executor: the only role with a coding tool; writes a new Python script from the scientist's latest plan, runs it, and reports the printed free-run RMSE or the traceback.
+- human: the person who gave the task. Ask them only in the two situations below.
 
 Routing rules:
 - Plan / ODE questions (the differential equation, the network, training, the free-run test, revising the plan) -> scientist.
 - Tracebacks, failed or timed-out runs, and implementing or running the plan -> executor.
 - Conceptual side questions (what a record in the file is, what a term means, what a reported error measures) -> general.
 - finish only when an executor turn contains a free-run test RMSE printed by a script that ran with exit code 0, and the task is answered.
+
+When to ask the human (next = human):
+- Ambiguous query (kind = ambiguous): the latest request has more than one reading, and those
+  readings would send the work to different roles or change the number that gets reported.
+  In question, list the readings and ask which one to follow. proposed_next = none.
+- Hard decision (kind = hard): the next step would
+    * run the coding tool (give the turn to the executor),
+    * overwrite a result that is already on disk, or
+    * finish and report a measurement.
+  In question, state that step and ask whether to proceed. Set proposed_next to that step
+  (executor or finish), and write in instruction what that step will do after a yes.
+- The human's reply appears in the dialogue as a turn with role human. Follow it, and do not ask
+  the same question again. If the human refused a step, do not propose the same step again unchanged.
+- In every other case: kind = none, question is empty, proposed_next = none.
 
 You have at most {s.max_decisions} decisions in total. Make the instruction concrete for the current state of the dialogue."""
 
