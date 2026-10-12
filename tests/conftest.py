@@ -73,6 +73,8 @@ def settings(tmp_path) -> Settings:
 def run_graph(tmp_path, settings):
     def _run(llm):
         graph = build_graph(llm, tmp_path, settings)
-        return graph.invoke(initial_state("task"), config={"recursion_limit": 60})
+        return graph.invoke(
+            initial_state("task"), config={"recursion_limit": 60, "configurable": {"thread_id": "test"}}
+        )
 
     return _run
