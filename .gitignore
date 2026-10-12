@@ -221,7 +221,5 @@ __marimo__/
 
 # agentic-ode-system
 .env
-runs/*
-!runs/20261009-201921/
 *.egg-info/
 build/
