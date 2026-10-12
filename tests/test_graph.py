@@ -49,7 +49,7 @@ def test_decision_limit(run_graph, settings):
 def test_only_executor_has_tools(tmp_path, settings):
     llm = FakeLLM(["finish"])
     build_graph(llm, tmp_path, settings)
-    assert llm.bound_tools == [["write_file", "run_file"]]  # bound exactly once, by the executor
+    assert llm.bound_tools == [["write_file", "run_file", "run_focus_search"]]  # bound exactly once, by the executor
 
 
 def test_checkpointer_saves_final_state(tmp_path, settings):

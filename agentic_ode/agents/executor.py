@@ -1,4 +1,4 @@
-"""The executor: the only node bound to the coding tool. Runs an internal tool loop, appends one turn."""
+"""The executor: the only node bound to tools (coding tool + focusing tool). Runs a tool loop, appends one turn."""
 
 from __future__ import annotations
 
@@ -12,17 +12,21 @@ from agentic_ode.agents import prompts
 from agentic_ode.agents.context import specialist_messages
 from agentic_ode.config import Settings
 from agentic_ode.llm import text_of, with_retry
-from agentic_ode.state import DialogueState, Role, RunRecord
+from agentic_ode.state import DialogueState, ExperimentRecord, Role, RunRecord
 from agentic_ode.tools import (
+    FOCUS_RESULT_KEY,
     RUN_FILE,
+    RUN_FOCUS_SEARCH,
     TEST_RMSE_RE,
     TRAIN_RMSE_RE,
     WRITE_FILE,
     RunResult,
+    format_focus,
     format_run,
     make_executor_tools,
     parse_rmse,
     run_file,
+    run_focus_search,
     write_file,
 )
 
@@ -37,6 +41,7 @@ class _TurnLog:
 
     turn_index: int
     runs: list[RunRecord] = field(default_factory=list)
+    experiments: list[ExperimentRecord] = field(default_factory=list)
     outputs: list[str] = field(default_factory=list)  # run outputs as shown to the model
     written: list[str] = field(default_factory=list)
 
@@ -64,6 +69,7 @@ class Executor:
         return {
             "dialogue": [{"role": Role.EXECUTOR.value, "content": self._compose_turn(report, turn)}],
             "runs": turn.runs,
+            "experiments": turn.experiments,
         }
 
     # ------------------------------------------------------------ tool calls
@@ -76,8 +82,10 @@ class Executor:
                 return self._write(args["filename"], args["content"], turn)
             if call["name"] == RUN_FILE:
                 return self._run(args["filename"], turn)
+            if call["name"] == RUN_FOCUS_SEARCH:
+                return self._focus(args, turn)
             return f"ERROR: unknown tool {call['name']}"
-        except (KeyError, ValueError) as e:
+        except (KeyError, ValueError, TypeError) as e:
             return f"ERROR: {e}"
 
     def _write(self, filename: str, content: str, turn: _TurnLog) -> str:
@@ -108,6 +116,25 @@ class Executor:
         })
         return shown
 
+    def _focus(self, args: dict, turn: _TurnLog) -> str:
+        limit = self.settings.max_focus_calls_per_turn
+        if len(turn.experiments) >= limit:
+            return f"ERROR: limit of {limit} focus searches in this turn reached; report now."
+        result = run_focus_search(**{k: int(v) for k, v in args.items()}, workdir=self.workdir)
+        shown = format_focus(result)
+        log.info("focus search %s: enhancement %s", result["settings"], result["final_enhancement"])
+        turn.outputs.append(shown)
+        turn.experiments.append({
+            "turn_index": turn.turn_index,
+            "settings": result["settings"],
+            "n_macropixels": result["n_macropixels"],
+            "initial_enhancement": result["initial_enhancement"],
+            "final_enhancement": result["final_enhancement"],
+            "result_line": f"{FOCUS_RESULT_KEY}: {result['final_enhancement']}",
+            "images": result["images"],
+        })
+        return shown
+
     # ------------------------------------------------------------ the turn text
 
     @staticmethod
@@ -118,7 +145,7 @@ class Executor:
         if turn.outputs:
             content += "\n\n=== tool output (verbatim) ===\n" + "\n\n".join(turn.outputs)
         else:
-            content += "\n\n=== tool output ===\n(no script was run in this turn)"
+            content += "\n\n=== tool output ===\n(no tool was run in this turn)"
         return content
 
     def _clip(self, s: str) -> str:

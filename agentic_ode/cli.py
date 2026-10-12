@@ -18,14 +18,19 @@ def _print_turn(turn: Turn) -> None:
     print(f"[{turn['role']}] {turn['content']}\n", flush=True)
 
 
-def _ask(payload: dict) -> str:
-    """Show the graph's question to the person and read the reply. End of input (Ctrl-D) gives "" = refuse."""
+def _show_question(payload: dict) -> str:
     kind = payload.get("kind") or "none"
     print(f" HUMAN INPUT NEEDED ({kind}) ".center(75, "="))
     print(payload.get("question") or "(the orchestrator gave no question text)")
     if kind == "hard":
         print('(Start your answer with "yes" to accept. Anything else refuses.)')
     print("=" * 75, flush=True)
+    return kind
+
+
+def _ask(payload: dict) -> str:
+    """Show the graph's question to the person and read the reply. End of input (Ctrl-D) gives "" = refuse."""
+    _show_question(payload)
     try:
         return input("your reply> ")
     except EOFError:
@@ -33,11 +38,23 @@ def _ask(payload: dict) -> str:
         return ""
 
 
+def _auto_ask(payload: dict) -> str:
+    """--auto-approve: answer "yes" to hard-decision questions (printed, so the run shows them); ask otherwise."""
+    if payload.get("kind") != "hard":
+        return _ask(payload)
+    _show_question(payload)
+    print("your reply> yes   (auto-approve)\n", flush=True)
+    return "yes"
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     from agentic_ode.runner import run_task
 
+    if args.auto_approve:
+        print("auto-approve is ON: hard-decision questions are answered 'yes' automatically.\n", flush=True)
     try:
-        outcome = run_task(args.task, Settings.from_env(), on_turn=_print_turn, ask=_ask)
+        ask = _auto_ask if args.auto_approve else _ask
+        outcome = run_task(args.task, Settings.from_env(), on_turn=_print_turn, ask=ask)
     except ConfigurationError as e:
         print(f"configuration error: {e}", file=sys.stderr)
         return 2
@@ -60,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="send a task to the orchestrator and run the graph")
     run.add_argument("task", nargs="?", type=Path, default=DEFAULT_TASK, help="task file (default: task5.md)")
+    run.add_argument("--auto-approve", action="store_true",
+                     help='answer "yes" to hard-decision questions automatically (they are still printed)')
     run.set_defaults(func=cmd_run)
 
     rep = sub.add_parser("report", help="build the PDF report from a run's transcript.json")

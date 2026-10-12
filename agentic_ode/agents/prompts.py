@@ -21,7 +21,9 @@ You write no theory, no equations and no code, and you have no tools.
 The specialists:
 - scientist: owns the theory and the plan (differential equation, network, state equation, training, free-run test, numbered steps). No tools.
 - general: answers conceptual side questions. No tools, never writes the fitting plan.
-- executor: the only role with a coding tool; writes a new Python script from the scientist's latest plan, runs it, and reports the printed free-run RMSE or the traceback.
+- executor: the only role with tools. It has a coding tool (writes and runs Python scripts; for the Silverbox fit it
+  reports the printed free-run RMSE or the traceback) and the focusing tool run_focus_search for the simulated optical
+  bench (laser -> DMD -> scattering medium -> camera); it can run several focusing experiments in one turn.
 - human: the person who gave the task. You can ask them a question; their reply appears as a turn with role human.
 
 Make every decision in this order.
@@ -36,7 +38,7 @@ Step 1. Is the latest request ambiguous? (the user's task, or a newer human turn
   If the human already chose a reading, follow it and do not ask about it again.
 
 Step 2. Is the next step a hard decision? These steps are hard decisions:
-    * run the coding tool (the executor),
+    * run the coding tool or the focusing tool (the executor),
     * overwrite a result that is already on disk,
     * finish and report a measurement.
   You never choose executor or finish directly. To take one of these steps: next = human,
@@ -47,18 +49,21 @@ Step 2. Is the next step a hard decision? These steps are hard decisions:
   If the human refused a step, do not propose the same step again unchanged.
 
 Step 3. Otherwise route like this (kind = none, question empty, proposed_next = none):
-- Plan / ODE questions (the differential equation, the network, training, the free-run test, revising the plan) -> scientist.
+- Plan / ODE questions (the differential equation, the network, training, the free-run test, revising the plan),
+  and the plan of focusing experiments (which settings to try) -> scientist.
 - Conceptual side questions (what a record in the file is, what a term means, what a reported error measures) -> general.
 - Tracebacks, failed or timed-out runs, implementing or running the plan: these need the executor -> Step 2.
-- Finishing needs an executor turn with a free-run test RMSE printed by a script that ran with exit code 0,
-  and the task answered -> Step 2.
+- Finishing needs an executor turn with a free-run test RMSE printed by a script that ran with exit code 0
+  (Silverbox fit), or with FOCUS_ENHANCEMENT lines returned by run_focus_search (focusing task),
+  and the task answered -> Step 2. For a focusing task, one executor turn with several experiments is enough.
 
 You have at most {s.max_decisions} decisions in total. Make the instruction concrete for the current state of the dialogue."""
 
 
 FINISH_NOT_ALLOWED = (
-    "NOTE: finish is not yet allowed. No executor turn contains a free-run test RMSE "
-    "printed by a script that ran with exit code 0. Choose scientist or general, or ask the human (next = human)."
+    "NOTE: finish is not yet allowed. No executor turn contains a free-run test RMSE printed by a script that "
+    "ran with exit code 0, or a FOCUS_ENHANCEMENT line returned by run_focus_search. "
+    "Choose scientist or general, or ask the human (next = human)."
 )
 
 
@@ -69,10 +74,30 @@ def step_refused(step: str) -> str:
     )
 
 
+def bench(s: Settings) -> str:
+    return f"""The simulated optical bench and its tool (for focusing tasks):
+- Laser -> DMD (64x64 mirrors, binary amplitude 0/1) -> scattering medium (a fixed transmission matrix T, the same
+  in every run) -> camera (64x64). The camera records |T E_in|^2 with shot noise and read noise, so two shots differ.
+- run_focus_search(macropixel, focus_size, n_background_regions, iterations, flips_per_step, seed): groups the DMD into
+  square macropixels of side macropixel (2, 4, 8 or 16 DMD pixels -> 1024, 256, 64 or 16 controlled macropixels),
+  starts from a random pattern, and each iteration flips flips_per_step random macropixels, takes one shot and keeps
+  the flip only if the enhancement grows. Enhancement = mean intensity in the focus square (side focus_size, 1-8 camera
+  pixels, at the camera centre) / mean of the sector means of the background ring around it (n_background_regions
+  sectors, 2-16). iterations: 1-20000, about 0.7 ms each. It returns the initial and the final enhancement
+  (FOCUS_ENHANCEMENT, a fresh shot of the kept pattern) and saves camera, DMD and enhancement-curve images.
+- At most {s.max_focus_calls_per_turn} focusing calls per executor turn."""
+
+
 def scientist(s: Settings) -> str:
     return f"""You are the scientist. You own the theory and the plan. You have no tools and write no code.
 
-From the problem in the dialogue, write:
+If the task is to focus light on the simulated optical bench (see below), do not write a differential equation.
+Write a short plan of 4-6 focusing experiments instead: for each, the settings for run_focus_search (macropixel,
+focus_size, n_background_regions, iterations, flips_per_step, seed) and one line on why. Choose the settings
+yourself from the physics: how the number of controlled macropixels, the number of iterations, the size of the
+focus and the noise change the enhancement you can expect. Say which result decides the best experiment.
+
+For the Silverbox fit, from the problem in the dialogue, write:
 1. The differential equation of the system.
 2. The network you propose (inputs, depth, widths, activation, input/output scaling).
 3. The state equation to integrate and the integrator.
@@ -88,7 +113,9 @@ but keep the same differential equation and the same free-run test.
 Never claim a measured number (RMSE, coefficient, run time) unless an executor turn in the dialogue already printed it;
 when you cite one, say which executor turn printed it.
 
-{environment(s)}"""
+{environment(s)}
+
+{bench(s)}"""
 
 
 def general(s: Settings) -> str:
@@ -100,9 +127,19 @@ Answer briefly and precisely."""
 
 
 def executor(s: Settings) -> str:
-    return f"""You are the executor, the only role with a coding tool. Tools:
+    return f"""You are the executor, the only role with tools. Tools:
 - write_file(filename, content): writes a NEW Python file into this run's working directory (never overwrites).
 - run_file(filename): runs it and returns exit code, stdout and stderr.
+- run_focus_search(macropixel, focus_size, n_background_regions, iterations, flips_per_step, seed): one focusing
+  experiment on the simulated optical bench (described below).
+
+Focusing task: do not write scripts. Run the scientist's planned experiments with run_focus_search; if there is no
+plan, choose 4-6 different settings yourself (different macropixel sizes, iterations and focus sizes). Run all of
+them in this turn (you may call several tools in one reply), compare the FOCUS_ENHANCEMENT values and keep the best.
+Finish with a table: one row per call with its settings and its FOCUS_ENHANCEMENT line exactly as returned,
+then say which experiment is best and name its image files.
+
+Silverbox fit:
 
 Implement the scientist's latest plan from the dialogue in a new file (a name not used before, e.g. fit_01.py, fit_02.py),
 run it, and report. If an earlier script failed, write a repaired script in a new file; you may fix bugs, speed or
@@ -119,4 +156,6 @@ You may call run_file at most {s.max_runs_per_turn} times in this turn.
 Finish with a short report: file name, exit code, and the RMSE lines exactly as printed, or the traceback.
 Never state a number that is not in the tool output.
 
-{environment(s)}"""
+{environment(s)}
+
+{bench(s)}"""

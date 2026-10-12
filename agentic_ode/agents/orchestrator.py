@@ -48,8 +48,14 @@ class Decision(BaseModel):
 
 
 def finish_allowed(state: DialogueState) -> bool:
-    """True if some executor turn carries a test RMSE parsed from the stdout of a run with exit code 0."""
+    """True if some executor turn carries a test RMSE parsed from the stdout of a run with exit code 0,
+    or the FOCUS_ENHANCEMENT line of a real focusing-tool call."""
     dialogue = state["dialogue"]
+    for exp in state.get("experiments", []):
+        i = exp["turn_index"]
+        in_turn = 0 <= i < len(dialogue) and dialogue[i]["role"] == Role.EXECUTOR
+        if in_turn and exp["result_line"] in dialogue[i]["content"]:
+            return True
     for run in state.get("runs", []):
         i = run["turn_index"]
         if (

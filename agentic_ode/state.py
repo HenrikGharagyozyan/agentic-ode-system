@@ -39,10 +39,23 @@ class RunRecord(TypedDict):
     train_rmse: float | None
 
 
+class ExperimentRecord(TypedDict):
+    """One real call of run_focus_search, kept outside the text so the finish guard can trust it."""
+
+    turn_index: int
+    settings: dict
+    n_macropixels: int
+    initial_enhancement: float
+    final_enhancement: float
+    result_line: str  # the FOCUS_ENHANCEMENT line exactly as the tool printed it
+    images: dict
+
+
 class DialogueState(TypedDict):
     dialogue: Annotated[list[Turn], operator.add]
     decisions: Annotated[int, operator.add]  # number of orchestrator decisions so far
     runs: Annotated[list[RunRecord], operator.add]
+    experiments: Annotated[list[ExperimentRecord], operator.add]  # focusing-tool calls
     route: str  # next node chosen by the orchestrator, or END_ROUTE
     stop_reason: str
     pending_step: str  # step that waits for the human's approval ("executor", "finish"), or ""
@@ -54,6 +67,7 @@ def initial_state(user_message: str) -> DialogueState:
         "dialogue": [{"role": Role.USER.value, "content": user_message}],
         "decisions": 0,
         "runs": [],
+        "experiments": [],
         "route": "",
         "stop_reason": "",
         "pending_step": "",

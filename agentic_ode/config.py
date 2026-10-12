@@ -35,6 +35,7 @@ class Settings:
     run_timeout_s: float = 300
     max_tool_rounds: int = 10
     max_runs_per_turn: int = 2
+    max_focus_calls_per_turn: int = 8
     max_output_chars: int = 12000  # per stream in the dialogue; run records keep the full text
 
     @classmethod

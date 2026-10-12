@@ -16,6 +16,7 @@ def save_transcript(run_dir: Path, state: dict, meta: dict) -> None:
         "decisions": state.get("decisions", 0),
         "dialogue": state["dialogue"],
         "runs": state.get("runs", []),
+        "experiments": state.get("experiments", []),
     }
     (run_dir / JSON_NAME).write_text(json.dumps(data, indent=2, ensure_ascii=False))
     (run_dir / MD_NAME).write_text(_markdown(run_dir.name, data, meta))
