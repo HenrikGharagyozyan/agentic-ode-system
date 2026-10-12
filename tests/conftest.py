@@ -14,8 +14,9 @@ GOOD_SCRIPT = "print('FREE_RUN_TRAIN_RMSE: 0.01')\nprint('FREE_RUN_TEST_RMSE: 0.
 
 
 class FakeLLM:
-    """Orchestrator decisions come from a list (the last one repeats). The executor writes one
-    script and runs it. Records every bind_tools call to check which nodes receive tools."""
+    """Orchestrator decisions come from a list (the last one repeats); an item is a role name or a
+    full Decision. The executor writes one script and runs it. Records every bind_tools call to
+    check which nodes receive tools."""
 
     def __init__(self, decisions, executor_script=GOOD_SCRIPT):
         self.decisions = list(decisions)
@@ -32,7 +33,7 @@ class FakeLLM:
             def invoke(self, messages):
                 outer.decision_calls += 1
                 nxt = outer.decisions.pop(0) if len(outer.decisions) > 1 else outer.decisions[0]
-                return Decision(next=nxt, instruction="do it", reason="test")
+                return nxt if isinstance(nxt, Decision) else Decision(next=nxt, instruction="do it", reason="test")
 
         return _Structured()
 
