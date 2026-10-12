@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 
 from agentic_ode.agents import Executor, Orchestrator, make_general, make_scientist
@@ -16,7 +17,10 @@ def route(state: DialogueState) -> str:
 
 
 def build_graph(llm, workdir: Path, settings: Settings | None = None):
-    """Compile the four-node graph. `workdir` is where the executor writes and runs scripts."""
+    """Compile the four-node graph. `workdir` is where the executor writes and runs scripts.
+
+    The graph has an in-memory checkpointer, so every invoke/stream needs a thread_id in its config.
+    """
     settings = settings or Settings()
     g = StateGraph(DialogueState)
     g.add_node(Role.ORCHESTRATOR.value, Orchestrator(llm, settings))
@@ -32,4 +36,4 @@ def build_graph(llm, workdir: Path, settings: Settings | None = None):
     )
     for role in SPECIALISTS:
         g.add_edge(role.value, Role.ORCHESTRATOR.value)
-    return g.compile()
+    return g.compile(checkpointer=InMemorySaver())
