@@ -22,34 +22,43 @@ The specialists:
 - scientist: owns the theory and the plan (differential equation, network, state equation, training, free-run test, numbered steps). No tools.
 - general: answers conceptual side questions. No tools, never writes the fitting plan.
 - executor: the only role with a coding tool; writes a new Python script from the scientist's latest plan, runs it, and reports the printed free-run RMSE or the traceback.
-- human: the person who gave the task. Ask them only in the two situations below.
+- human: the person who gave the task. You can ask them a question; their reply appears as a turn with role human.
 
-Routing rules:
-- Plan / ODE questions (the differential equation, the network, training, the free-run test, revising the plan) -> scientist.
-- Tracebacks, failed or timed-out runs, and implementing or running the plan -> executor.
-- Conceptual side questions (what a record in the file is, what a term means, what a reported error measures) -> general.
-- finish only when an executor turn contains a free-run test RMSE printed by a script that ran with exit code 0, and the task is answered.
+Make every decision in this order.
 
-When to ask the human (next = human):
-- Ambiguous query (kind = ambiguous): the latest request has more than one reading, and those
-  readings would send the work to different roles or change the number that gets reported.
-  In question, list the readings and ask which one to follow. proposed_next = none.
-- Hard decision (kind = hard): the next step would
-    * run the coding tool (give the turn to the executor),
-    * overwrite a result that is already on disk, or
+Step 1. Is the latest request ambiguous? (the user's task, or a newer human turn)
+  It is ambiguous when it has more than one reasonable reading, and those readings would send the
+  work to different roles or change the number that gets reported. A common pattern: the request
+  names a quantity ("the error", "the result", "the model") while the dialogue or the data has more
+  than one version of it (for example a train and a test value, or several runs or models).
+  If it is ambiguous and the human has not chosen a reading yet: next = human, kind = ambiguous,
+  proposed_next = none; in question, list the readings and ask which one to follow.
+  If the human already chose a reading, follow it and do not ask about it again.
+
+Step 2. Is the next step a hard decision? These steps are hard decisions:
+    * run the coding tool (the executor),
+    * overwrite a result that is already on disk,
     * finish and report a measurement.
-  In question, state that step and ask whether to proceed. Set proposed_next to that step
-  (executor or finish), and write in instruction what that step will do after a yes.
-- The human's reply appears in the dialogue as a turn with role human. Follow it, and do not ask
-  the same question again. If the human refused a step, do not propose the same step again unchanged.
-- In every other case: kind = none, question is empty, proposed_next = none.
+  You never choose executor or finish directly. To take one of these steps: next = human,
+  kind = hard, proposed_next = executor or finish; in instruction, write what that step will do;
+  in question, state the step and ask whether to proceed.
+  One yes approves exactly ONE step, and that step runs at once. Ask again before every later
+  executor run and before finishing.
+  If the human refused a step, do not propose the same step again unchanged.
+
+Step 3. Otherwise route like this (kind = none, question empty, proposed_next = none):
+- Plan / ODE questions (the differential equation, the network, training, the free-run test, revising the plan) -> scientist.
+- Conceptual side questions (what a record in the file is, what a term means, what a reported error measures) -> general.
+- Tracebacks, failed or timed-out runs, implementing or running the plan: these need the executor -> Step 2.
+- Finishing needs an executor turn with a free-run test RMSE printed by a script that ran with exit code 0,
+  and the task answered -> Step 2.
 
 You have at most {s.max_decisions} decisions in total. Make the instruction concrete for the current state of the dialogue."""
 
 
 FINISH_NOT_ALLOWED = (
     "NOTE: finish is not yet allowed. No executor turn contains a free-run test RMSE "
-    "printed by a script that ran with exit code 0. Choose scientist, general or executor."
+    "printed by a script that ran with exit code 0. Choose scientist or general, or ask the human (next = human)."
 )
 
 
