@@ -1,10 +1,2 @@
-langgraph>=1.2
-langchain>=1.4
-langchain-openai>=1.7
-python-dotenv>=1.0
-pydantic>=2
-numpy
-scipy
-torch
-matplotlib
-pytest
+# Dependencies are declared in pyproject.toml; this installs the package in editable mode with dev tools.
+-e .[dev]

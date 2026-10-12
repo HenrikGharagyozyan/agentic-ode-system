@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-ode"
+version = "0.2.0"
+description = "A four-role LangGraph system (orchestrator, scientist, general, executor) that fits and tests ODE models"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=1.2",
+    "langchain>=1.4",
+    "langchain-openai>=1.7",
+    "langchain-core>=1.6",
+    "python-dotenv>=1.0",
+    "pydantic>=2",
+    # used by the scripts the executor writes and runs
+    "numpy",
+    "scipy",
+    "torch",
+    # graph diagram in the report
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+agentic-ode = "agentic_ode.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agentic_ode*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = ["runs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# prompt text and the HTML template keep their exact wording and layout
+"agentic_ode/agents/prompts.py" = ["E501"]
+"agentic_ode/reporting/builder.py" = ["E501"]
