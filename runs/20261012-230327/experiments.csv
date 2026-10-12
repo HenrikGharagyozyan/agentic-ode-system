@@ -1,0 +1,6 @@
+experiment,macropixel,n_macropixels,focus_size,n_background_regions,iterations,flips_per_step,seed,initial_enhancement,final_enhancement,best_measured_enhancement,accepted_flips,runtime_s
+focus_01,2,1024,2,4,5000,1,0,1.257,27.158,28.335,293,3.77
+focus_02,4,256,3,8,8000,2,1,1.006,10.79,11.281,140,7.08
+focus_03,8,64,4,6,12000,3,2,1.178,3.963,3.996,46,10.01
+focus_04,16,16,5,4,15000,4,3,1.367,1.805,1.803,8,11.66
+focus_05,2,1024,1,16,7000,1,4,1.182,83.067,87.133,302,4.59
