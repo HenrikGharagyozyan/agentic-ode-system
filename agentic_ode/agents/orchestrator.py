@@ -25,7 +25,8 @@ class Decision(BaseModel):
         description="The role that gets the next turn, human to ask the person, or finish."
     )
     instruction: str = Field(
-        description="What that role should do now. For human with kind hard: what the proposed step will do after a yes."
+        description="What that role should do now. "
+        "For human with kind hard: what the proposed step will do after a yes."
     )
     reason: str = Field(description="One sentence: why this role now.")
     kind: Literal["ambiguous", "hard", "none"] = Field(
