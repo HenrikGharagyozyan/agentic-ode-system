@@ -53,6 +53,13 @@ FINISH_NOT_ALLOWED = (
 )
 
 
+def step_refused(step: str) -> str:
+    return (
+        f"NOTE: the human just refused the step '{step}'. It must not run now. "
+        "Choose another role, or ask the human again (next = human) with a changed proposal."
+    )
+
+
 def scientist(s: Settings) -> str:
     return f"""You are the scientist. You own the theory and the plan. You have no tools and write no code.
 
