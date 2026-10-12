@@ -16,6 +16,7 @@ from agentic_ode.graph import build_graph  # noqa: E402
 _POS = {
     "__start__": (0, 2.2), "orchestrator": (0, 1), "scientist": (-2.2, -0.6),
     "general": (0, -0.6), "executor": (2.2, -0.6), "__end__": (3.1, 1.9),
+    "human": (-2.6, 1.6),
 }
 _LABELS = {"__start__": "START\n(user message)", "__end__": "END"}
 _BLUE, _GREY = "#2b5c8a", "#555555"
