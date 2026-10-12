@@ -84,9 +84,6 @@ class Orchestrator:
         elif decision.next == FINISH:
             # The model kept choosing finish against the guard; stop without claiming a result.
             route, stop = END_ROUTE, "finish refused by guard (no RMSE from a successful run)"
-        elif decision.next == HUMAN:
-            # Temporary: there is no human node yet, so stop and keep the question in the dialogue.
-            route, stop = END_ROUTE, "human input needed (no human node yet)"
         else:
             route, stop = decision.next, ""
         log.info("decision %d: %s (%s)", used + 1, decision.next, decision.reason)
@@ -95,6 +92,7 @@ class Orchestrator:
             "decisions": 1,
             "route": route,
             "stop_reason": stop,
+            "pending_step": decision.proposed_next if decision.next == HUMAN and decision.kind == "hard" else "",
         }
 
     def _decide_respecting_guard(self, state: DialogueState) -> Decision:
