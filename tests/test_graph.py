@@ -1,5 +1,7 @@
 """Finish guard, decision limit and tool ownership, end to end through the compiled graph."""
 
+from langgraph.types import Command
+
 from agentic_ode.agents import Decision, finish_allowed
 from agentic_ode.graph import build_graph
 from agentic_ode.state import initial_state
@@ -59,10 +61,24 @@ def test_checkpointer_saves_final_state(tmp_path, settings):
     assert saved.next == ()  # the graph reached END; nothing is waiting
 
 
-def test_human_decision_stops_until_human_node_exists(run_graph):
+def test_human_decision_pauses_the_graph(run_graph):
     out = run_graph(FakeLLM(["human"]))
     assert out["decisions"] == 1
-    assert out["stop_reason"] == "human input needed (no human node yet)"
+    assert out["route"] == "human"
+    assert "__interrupt__" in out  # invoke returned early: the graph waits for a reply
+
+
+def test_graph_pauses_on_human_and_resumes(tmp_path, settings):
+    graph = build_graph(FakeLLM(["human", "finish"]), tmp_path, settings)
+    config = {"recursion_limit": 60, "configurable": {"thread_id": "t1"}}
+
+    out = graph.invoke(initial_state("task"), config=config)
+    assert graph.get_state(config).next == ("human",)  # paused inside the human node
+    assert set(out["__interrupt__"][0].value) == {"question", "kind"}
+
+    out = graph.invoke(Command(resume="use reading A"), config=config)
+    assert out["dialogue"][2] == {"role": "human", "content": "use reading A"}
+    assert [t["role"] for t in out["dialogue"]] == ["user", "orchestrator", "human", "orchestrator"]
 
 
 def test_decision_as_turn_shows_human_fields():
