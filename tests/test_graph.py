@@ -1,6 +1,6 @@
 """Finish guard, decision limit and tool ownership, end to end through the compiled graph."""
 
-from agentic_ode.agents import finish_allowed
+from agentic_ode.agents import Decision, finish_allowed
 from agentic_ode.graph import build_graph
 from agentic_ode.state import initial_state
 from tests.conftest import FakeLLM
@@ -57,6 +57,22 @@ def test_checkpointer_saves_final_state(tmp_path, settings):
     saved = graph.get_state(config)
     assert saved.values == out  # the checkpointer holds the same final state
     assert saved.next == ()  # the graph reached END; nothing is waiting
+
+
+def test_human_decision_stops_until_human_node_exists(run_graph):
+    out = run_graph(FakeLLM(["human"]))
+    assert out["decisions"] == 1
+    assert out["stop_reason"] == "human input needed (no human node yet)"
+
+
+def test_decision_as_turn_shows_human_fields():
+    ask = Decision(next="human", instruction="run fit_01.py", reason="needs approval",
+                   kind="hard", proposed_next="executor", question="Run the coding tool now?")
+    text = ask.as_turn()
+    assert "kind: hard" in text and "proposed_next: executor" in text
+    assert "question: Run the coding tool now?" in text
+    normal = Decision(next="scientist", instruction="plan", reason="no plan yet")
+    assert normal.as_turn().count("\n") == 2  # still only next / instruction / reason
 
 
 def test_executor_turn_contains_verbatim_tool_output(run_graph):
