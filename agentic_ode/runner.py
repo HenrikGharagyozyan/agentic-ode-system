@@ -46,8 +46,9 @@ def run_task(
     }
 
     state = initial_state(task_file.read_text())
+    config = {"recursion_limit": RECURSION_LIMIT, "configurable": {"thread_id": run_dir.name}}
     printed = 0
-    for snapshot in graph.stream(state, stream_mode="values", config={"recursion_limit": RECURSION_LIMIT}):
+    for snapshot in graph.stream(state, stream_mode="values", config=config):
         state = snapshot
         if on_turn:
             for turn in state["dialogue"][printed:]:
