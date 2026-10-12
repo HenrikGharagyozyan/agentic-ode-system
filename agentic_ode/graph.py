@@ -1,4 +1,4 @@
-"""StateGraph: orchestrator routes to scientist / general / executor / END; specialists return to it."""
+"""StateGraph: orchestrator routes to scientist / general / executor / human / END; all of them return to it."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 
-from agentic_ode.agents import Executor, Orchestrator, make_general, make_scientist
+from agentic_ode.agents import Executor, Orchestrator, human, make_general, make_scientist
 from agentic_ode.config import Settings
 from agentic_ode.state import END_ROUTE, SPECIALISTS, DialogueState, Role
 
@@ -17,7 +17,7 @@ def route(state: DialogueState) -> str:
 
 
 def build_graph(llm, workdir: Path, settings: Settings | None = None):
-    """Compile the four-node graph. `workdir` is where the executor writes and runs scripts.
+    """Compile the five-node graph. `workdir` is where the executor writes and runs scripts.
 
     The graph has an in-memory checkpointer, so every invoke/stream needs a thread_id in its config.
     """
@@ -27,13 +27,15 @@ def build_graph(llm, workdir: Path, settings: Settings | None = None):
     g.add_node(Role.SCIENTIST.value, make_scientist(llm, settings))
     g.add_node(Role.GENERAL.value, make_general(llm, settings))
     g.add_node(Role.EXECUTOR.value, Executor(llm, settings, workdir))
+    g.add_node(Role.HUMAN.value, human)
 
     g.set_entry_point(Role.ORCHESTRATOR.value)
     g.add_conditional_edges(
         Role.ORCHESTRATOR.value,
         route,
-        {**{r.value: r.value for r in SPECIALISTS}, END_ROUTE: END},
+        {**{r.value: r.value for r in SPECIALISTS}, Role.HUMAN.value: Role.HUMAN.value, END_ROUTE: END},
     )
     for role in SPECIALISTS:
         g.add_edge(role.value, Role.ORCHESTRATOR.value)
+    g.add_edge(Role.HUMAN.value, Role.ORCHESTRATOR.value)  # for now always back to the orchestrator
     return g.compile(checkpointer=InMemorySaver())
