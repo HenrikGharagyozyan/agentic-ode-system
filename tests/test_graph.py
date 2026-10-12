@@ -50,6 +50,15 @@ def test_only_executor_has_tools(tmp_path, settings):
     assert llm.bound_tools == [["write_file", "run_file"]]  # bound exactly once, by the executor
 
 
+def test_checkpointer_saves_final_state(tmp_path, settings):
+    graph = build_graph(FakeLLM(["executor", "finish"]), tmp_path, settings)
+    config = {"recursion_limit": 60, "configurable": {"thread_id": "t1"}}
+    out = graph.invoke(initial_state("task"), config=config)
+    saved = graph.get_state(config)
+    assert saved.values == out  # the checkpointer holds the same final state
+    assert saved.next == ()  # the graph reached END; nothing is waiting
+
+
 def test_executor_turn_contains_verbatim_tool_output(run_graph):
     out = run_graph(FakeLLM(["executor", "finish"]))
     executor_turn = next(t for t in out["dialogue"] if t["role"] == "executor")
