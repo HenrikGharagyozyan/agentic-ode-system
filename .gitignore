@@ -223,3 +223,8 @@ __marimo__/
 .env
 *.egg-info/
 build/
+
+# hw3 event camera: raw recordings can be hundreds of MB
+runs/evcam/
+runs/probe/
+data/evcam/*.npz
