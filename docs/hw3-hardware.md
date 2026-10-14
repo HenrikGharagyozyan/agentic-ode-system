@@ -26,7 +26,45 @@ metavision_core.event_io.EventsIterator.from_device(device=dev, delta_t=10000)  
 ```
 - Bias names: `bias_diff`, `bias_diff_on`, `bias_diff_off`, `bias_fo`, `bias_hpf`, `bias_refr`.
   Values are offsets; 0 = default.
-- Recording twice from the same open device works.
+- Recording twice from the same open device: the stream time **pauses** between recordings and continues
+  where the last one stopped (verified 2026-10-14: recording 1 ended at t = 1.000 s; recording 2 started 2 s
+  later on the wall clock, and its first event had t = 1.010 s). A new `EventsIterator` starts its slice clock
+  at 0, so it first yields empty **catch-up slices** very fast (1000 slices in ~37 ms) before the real ones.
+  `EventCamera.record()` remembers where the last recording stopped in `_t_end` (reset to 0 in `open()`)
+  and skips every slice that ends at or before it.
+
+## Facilities and defaults
+Read with `runs/probe/02_read_values.py` on 2026-10-14, right after opening, nothing changed.
+
+- 19 of 24 `dev.get_i_*()` facilities exist. Not available: `event_frame_diff_decoder`,
+  `event_frame_histo_decoder`, `event_rate`, `roi_pixel_mask`, `trigger_out`.
+- All on-chip filters are **off** at open:
+  - `antiflicker_module`: BandStop, band 50..520 Hz (= supported min/max), duty cycle 50 %, start/stop threshold 6/4.
+    Must stay disabled for flicker measurements.
+  - `erc_module` (event rate controller): 50,000,000 ev/s, count period 200.
+  - `event_trail_filter_module`: type TRAIL, threshold 10000 (range 1000..100000);
+    types TRAIL, STC_CUT_TRAIL, STC_KEEP_TRAIL.
+  - `digital_crop`: region (0, 0, 0, 0).
+- All biases are 0 at open. Ranges from `get_bias_info(name)` (recommended = `get_bias_range()`):
+
+  | bias          | recommended | allowed   | category                      |
+  |---------------|-------------|-----------|-------------------------------|
+  | bias_diff     | -25..23     | -150..200 | Contrast                      |
+  | bias_diff_on  | -85..140    | -150..200 | Contrast                      |
+  | bias_diff_off | -35..190    | -150..200 | Contrast                      |
+  | bias_fo       | -35..55     | -150..200 | Bandwidth (low-pass)          |
+  | bias_hpf      | 0..120      | 0..255    | Bandwidth (high-pass)         |
+  | bias_refr     | -20..235    | -50..255  | Advanced (refractory period)  |
+
+- Device config options: `format`, `ll_biases_range_check_bypass` (not tested).
+- ROI: at most 1 window. Modes `ROI` and `RONI` (not tested yet). `Window(x, y, width, height)`:
+  verified `Window(1, 2, 3, 4)` -> x=1 y=2 width=3 height=4, `to_string()` = `'[1,2,3x4]'`.
+  `set_window(Window) -> bool`, `set_windows(list)`, `set_mode(Mode) -> bool`, `set_lines(cols, rows)`,
+  `enable(bool) -> bool`.
+- Monitoring: `get_temperature()` = 35, `get_pixel_dead_time()` = 73 (units not documented).
+  `get_illumination()` is not supported: returns -1 and logs `[HAL][ERROR] Failed to get illumination`.
+- Data format EVT3 (EVT21 also available). Camera firmware 3.10.255, IDS plugin 5.0.0.
+- `camera_synchronization.get_mode()` and `trigger_in.is_enabled()` need an argument; not explored.
 
 ## Noise behaviour
 Mev/s = million events per second.
