@@ -70,6 +70,19 @@ def test_hot_pixels_threshold_order_and_top():
     assert len(hot_pixels(ev, 1.0, min_rate_hz=50)) == 3
 
 
+def test_two_hot_pixels_at_equal_rates_are_both_returned():
+    # the real defect pixels: equal rates, and pixel ids y*1280+x far above the uint16 limit 65535
+    n = 100_000
+    x = np.repeat([1053, 926], n)
+    y = np.repeat([704, 151], n)
+    ev = make_events(x, y, np.zeros(2 * n), np.tile(np.arange(n), 2))
+    assert ev["x"].dtype == np.uint16 and 704 * 1280 + 1053 > 65535
+    hot = hot_pixels(ev, 1.0)
+    assert sorted((h["x"], h["y"], h["count"]) for h in hot) == [(926, 151, n), (1053, 704, n)]
+    top = summary(ev, 1.0)["top_pixels"]
+    assert sorted((p["x"], p["y"], p["count"]) for p in top) == [(926, 151, n), (1053, 704, n)]
+
+
 def test_hot_pixels_bad_rate():
     with pytest.raises(ValueError, match="min_rate_hz must be > 0"):
         hot_pixels(make_events([], [], [], []), 1.0, min_rate_hz=0)
