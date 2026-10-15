@@ -22,9 +22,9 @@ dependencies = [
     "torch",
     # graph diagram in the report
     "matplotlib",
-    # HW3: the event camera MCP server and its client for the agent
+    # HW3: the event camera MCP server, and its client for the agent (agentic_ode/mcp_client.py; not
+    # langchain-mcp-adapters: no release works with mcp 2.x, which fastmcp 4 needs)
     "fastmcp>=4.1",
-    "langchain-mcp-adapters>=0.3",
 ]
 
 [project.optional-dependencies]
