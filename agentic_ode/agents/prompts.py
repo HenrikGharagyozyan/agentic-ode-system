@@ -22,6 +22,9 @@ hardware turn.
   ask the human yourself for camera actions (Step 2 does not apply to hardware).
 - After every hardware turn, read its result and any system note before you decide again. Use its numbers and
   recording_ids, never invent them. Do not repeat a refused or failed call unchanged.
+- After a setting change, record again before analysing; a recording reflects the settings at the time it was made.
+- Read every warning in a hardware result and act on it before finishing. Report the fundamental frequency
+  (fundamental_hz), not the strongest peak.
 - Finishing a camera task needs a hardware turn with a successful measurement (record, spectrum or find_hot_pixels
   with "ok": true) and the task answered -> Step 2. A spectrum without a peak is a valid result ("no flicker").
 
