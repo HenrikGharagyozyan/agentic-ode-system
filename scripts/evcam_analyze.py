@@ -26,7 +26,8 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
     with np.load(args.file, allow_pickle=False) as d:
         events, meta = d["events"], json.loads(str(d["meta"]))
-    seconds = meta["seconds"]  # the recorded camera time; the rate must not be measured from the last event
+    # the recorded camera time (less than asked if the recording stopped early); not measured from the last event
+    seconds = meta.get("recorded_s", meta["seconds"])
     result = {
         "file": str(args.file),
         "note": meta.get("note", ""),
