@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from langgraph.types import interrupt
 
-from agentic_ode.agents.context import decision_field
 from agentic_ode.agents.orchestrator import FINISH, finish_allowed
+from agentic_ode.core.dialogue import decision_field
 from agentic_ode.core.state import END_ROUTE, DialogueState, Role
 
 STEPS_NEEDING_APPROVAL = (Role.EXECUTOR.value, FINISH)

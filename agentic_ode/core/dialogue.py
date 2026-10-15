@@ -11,6 +11,14 @@ def role_label(role: str) -> str:
     return ROLE_LABELS.get(role, role)
 
 
+def decision_field(content: str, key: str) -> str:
+    """A `key: value` line of an orchestrator turn, or ''."""
+    for line in content.splitlines():
+        if line.startswith(key + ":"):
+            return line[len(key) + 1:].strip()
+    return ""
+
+
 def render_dialogue(dialogue: list[Turn]) -> str:
     """The dialogue as plain text, the way every node reads it."""
     return "\n\n".join(

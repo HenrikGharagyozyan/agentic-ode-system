@@ -4,16 +4,8 @@ from __future__ import annotations
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-from agentic_ode.core.dialogue import render_dialogue
+from agentic_ode.core.dialogue import decision_field, render_dialogue
 from agentic_ode.core.state import DialogueState, Role
-
-
-def decision_field(content: str, key: str) -> str:
-    """A `key: value` line of an orchestrator turn, or ''."""
-    for line in content.splitlines():
-        if line.startswith(key + ":"):
-            return line[len(key) + 1:].strip()
-    return ""
 
 
 def latest_instruction(state: DialogueState) -> str:
