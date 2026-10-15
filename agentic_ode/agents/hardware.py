@@ -18,8 +18,8 @@ from agentic_ode.agents import prompts
 from agentic_ode.agents.context import specialist_messages
 from agentic_ode.agents.executor import Executor
 from agentic_ode.agents.human import accepted
-from agentic_ode.config import Settings
-from agentic_ode.llm import text_of
+from agentic_ode.core.config import Settings
+from agentic_ode.core.llm import text_of
 from agentic_ode.state import CAMERA_SETTING_TOOLS, DialogueState, Role
 
 log = logging.getLogger(__name__)

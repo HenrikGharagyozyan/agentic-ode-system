@@ -36,6 +36,13 @@ def check_snapshot(name: str, data) -> None:
     assert text == path.read_text(), f"{name} differs from the snapshot"
 
 
+# ---- paths ----
+
+def test_project_root_is_the_repo():
+    # PROJECT_ROOT is computed from config.py's own path (__file__): a moved config.py must still point here
+    assert (PROJECT_ROOT / "pyproject.toml").is_file()
+
+
 # ---- MCP tools ----
 
 def test_mcp_tools_snapshot():

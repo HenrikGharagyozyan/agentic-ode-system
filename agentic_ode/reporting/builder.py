@@ -13,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 from agentic_ode.agents.context import decision_field
-from agentic_ode.config import PROJECT_ROOT
+from agentic_ode.core.config import PROJECT_ROOT
 from agentic_ode.reporting.diagram import graph_png
 from agentic_ode.state import Role, role_label
 from agentic_ode.tools import last_rmse_line, rmse_lines

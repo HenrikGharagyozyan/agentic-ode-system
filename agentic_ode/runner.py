@@ -13,9 +13,9 @@ from pathlib import Path
 
 from langgraph.types import Command
 
-from agentic_ode.config import PROJECT_ROOT, Settings
+from agentic_ode.core.config import PROJECT_ROOT, Settings
+from agentic_ode.core.llm import make_llm
 from agentic_ode.graph import build_graph
-from agentic_ode.llm import make_llm
 from agentic_ode.mcp_client import evcam_session
 from agentic_ode.state import DialogueState, Turn, initial_state
 from agentic_ode.transcript import save_transcript

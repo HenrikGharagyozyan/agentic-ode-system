@@ -9,8 +9,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from agentic_ode.agents import prompts
-from agentic_ode.config import Settings
-from agentic_ode.llm import with_retry
+from agentic_ode.core.config import Settings
+from agentic_ode.core.llm import with_retry
 from agentic_ode.state import CAMERA_MEASUREMENT_TOOLS, END_ROUTE, DialogueState, Role, render_dialogue
 from agentic_ode.tools import last_rmse_line
 

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from agentic_ode.config import PROJECT_ROOT
+from agentic_ode.core.config import PROJECT_ROOT
 from agentic_ode.hardware.evcam.connector import EVENT_DTYPE
 
 DEFAULT_ROOT = PROJECT_ROOT / "runs" / "evcam"

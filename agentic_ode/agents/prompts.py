@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agentic_ode.config import Settings
+from agentic_ode.core.config import Settings
 
 
 def environment(s: Settings) -> str:

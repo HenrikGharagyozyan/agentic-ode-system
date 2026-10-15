@@ -10,8 +10,8 @@ from langchain_core.messages import ToolMessage
 
 from agentic_ode.agents import prompts
 from agentic_ode.agents.context import specialist_messages
-from agentic_ode.config import Settings
-from agentic_ode.llm import text_of, with_retry
+from agentic_ode.core.config import Settings
+from agentic_ode.core.llm import text_of, with_retry
 from agentic_ode.state import DialogueState, ExperimentRecord, Role, RunRecord
 from agentic_ode.tools import (
     FOCUS_RESULT_KEY,
