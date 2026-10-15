@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 
+import jsonschema
 from langgraph.types import interrupt
 
 from agentic_ode.agents import prompts
@@ -34,6 +35,18 @@ def call_text(call: dict) -> str:
 def same_call(a: dict, b: dict) -> bool:
     """Same tool and same arguments (the order of the arguments does not matter)."""
     return a["name"] == b["name"] and json.dumps(a["args"], sort_keys=True) == json.dumps(b["args"], sort_keys=True)
+
+
+def schema_of(tool) -> dict:
+    """The tool's JSON schema: a dict for MCP tools; a tool with a pydantic schema (e.g. in tests) is converted."""
+    return tool.args_schema if isinstance(tool.args_schema, dict) else tool.args_schema.model_json_schema()
+
+
+def schema_errors(schema: dict, args: dict) -> list[str]:
+    """What is wrong with args for this JSON schema ([] = valid), e.g. "pixels/0: {'x': 926} is not of type
+    'array'". A little stricter than the server: a number sent as a string ("20") is refused here."""
+    validator = jsonschema.Draft202012Validator(schema)
+    return [f"{'/'.join(map(str, e.absolute_path)) or 'arguments'}: {e.message}" for e in validator.iter_errors(args)]
 
 
 def error_of(result_line: str) -> str:
@@ -60,7 +73,8 @@ class HardwareDecide:
     def __init__(self, executor: Executor, settings: Settings):
         self.executor = executor
         self.prompt = prompts.hardware(settings)
-        self.params = {t.name: set(t.args) for t in executor.camera_tools}  # the arguments each tool accepts
+        self.schemas = {t.name: schema_of(t) for t in executor.camera_tools}
+        self.params = {name: set(s.get("properties", {})) for name, s in self.schemas.items()}  # accepted arguments
 
     def __call__(self, state: DialogueState) -> dict:
         if self.executor.camera_llm is None:
@@ -82,6 +96,10 @@ class HardwareDecide:
             dropped = ", ".join(call_text({"name": c["name"], "args": c["args"]}) for c in calls[1:])
             notes.append(_note(f"The hardware turn asked for {len(calls)} camera calls; only the first one runs. "
                                f"Dropped: {dropped}"))
+        errors = schema_errors(self.schemas[name], args) if name in self.schemas else []
+        if errors:  # it would fail the format check: never ask the human to approve it, never send it
+            return _back(notes + [_note(f"The camera call {call_text(call)} did NOT run: its arguments do not match "
+                                        f"the tool's schema: {'; '.join(errors)}. Fix the arguments and try again.")])
         if any(same_call(call, r) for r in state["refused_calls"]):
             return _back(notes + [_note(f"The human refused the camera call {call_text(call)} earlier. "
                                         "It did NOT run and is not asked again; choose something else.")])
