@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from agentic_ode.core.state import Role, Turn
+from agentic_ode.core.state import DialogueState, Role, Turn
 
 ROLE_LABELS = {Role.HARDWARE: "executor (hardware)"}  # how a role is shown in transcripts and the report
 
 
 def role_label(role: str) -> str:
     return ROLE_LABELS.get(role, role)
+
+
+def last_orchestrator_turn(state: DialogueState) -> str:
+    """The text of the newest orchestrator turn, or ''."""
+    for turn in reversed(state["dialogue"]):
+        if turn["role"] == Role.ORCHESTRATOR:
+            return turn["content"]
+    return ""
 
 
 def decision_field(content: str, key: str) -> str:

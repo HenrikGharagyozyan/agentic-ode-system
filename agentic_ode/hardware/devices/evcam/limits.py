@@ -13,6 +13,7 @@ MIN_RECORD_S = 0.05
 WARMUP_S = 0.5
 MAX_EVENTS = 30_000_000
 MAX_MASK_SLOTS = 64
+MAX_PIXEL_RATE_HZ = 20_000  # ev/s; a real pixel cannot fire faster (dead time ~73 us), so faster pixels are defects
 SENSOR_W = 1280
 SENSOR_H = 720
 

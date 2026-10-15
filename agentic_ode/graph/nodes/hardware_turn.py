@@ -21,7 +21,8 @@ from agentic_ode.agents.guards import accepted
 from agentic_ode.core.config import Settings
 from agentic_ode.core.llm import text_of
 from agentic_ode.core.state import CAMERA_SETTING_TOOLS, DialogueState, Role
-from agentic_ode.graph.routing import HW_APPROVE, HW_CALL
+from agentic_ode.graph.routing import HW_APPROVE, HW_CALL, back_to_orchestrator
+from agentic_ode.graph.routing import note as _note
 
 log = logging.getLogger(__name__)
 
@@ -54,14 +55,9 @@ def error_of(result_line: str) -> str:
         return result_line
 
 
-def _note(text: str) -> dict:
-    """A turn written by the graph itself, not by a person or a model."""
-    return {"role": Role.SYSTEM.value, "content": text}
-
-
 def _back(turns: list[dict], **extra) -> dict:
     """No camera call runs now: give the turn back to the orchestrator."""
-    return {"dialogue": turns, "route": Role.ORCHESTRATOR.value, "hw_call": {}, **extra}
+    return back_to_orchestrator(turns, hw_call={}, **extra)
 
 
 class HardwareDecide:

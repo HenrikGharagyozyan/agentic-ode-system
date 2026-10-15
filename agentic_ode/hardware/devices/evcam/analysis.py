@@ -53,7 +53,8 @@ def summary(events: np.ndarray, seconds: float, top: int = 5) -> dict:
     }
 
 
-def hot_pixels(events: np.ndarray, seconds: float, top: int = 64, min_rate_hz: float = 20_000) -> list[dict]:
+def hot_pixels(events: np.ndarray, seconds: float, top: int = limits.MAX_MASK_SLOTS,
+               min_rate_hz: float = limits.MAX_PIXEL_RATE_HZ) -> list[dict]:
     """Pixels that fire at least min_rate_hz, busiest first, at most `top` of them.
 
     A real pixel cannot fire faster than about 20,000 ev/s (dead time ~73 us), so the default finds defect pixels.

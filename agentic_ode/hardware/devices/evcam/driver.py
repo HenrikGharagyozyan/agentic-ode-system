@@ -21,7 +21,6 @@ log = logging.getLogger(__name__)
 # is not enough (dark.npz, 2026-10-15); 8 s is the shortest burn-in verified so far (probe 06).
 SETTLE_S = 8.0
 SETTLE_CHECK_S = 0.5  # short decoded check stream after the settle: logs the noise level record() starts from
-MAX_PIXEL_RATE = 20_000  # ev/s; a real pixel cannot fire faster (dead time ~73 us), so faster pixels are defects
 FLUSH_S = 0.5  # after an early stop: read and drop raw data this long (no decoding, so Python keeps up)
 # on-chip filters that change the event stream; open() turns all of them off so measurements are raw
 FILTERS = {
@@ -117,7 +116,7 @@ class EventCamera:
         events = events[(events["t"] >= t_check) & (events["t"] < t_check + SETTLE_CHECK_S * 1e6)]
         counts = np.bincount(events["y"].astype(np.int64) * limits.SENSOR_W + events["x"],
                              minlength=limits.SENSOR_W * limits.SENSOR_H)
-        defect = counts > MAX_PIXEL_RATE * SETTLE_CHECK_S
+        defect = counts > limits.MAX_PIXEL_RATE_HZ * SETTLE_CHECK_S
         log.info("settled for %.1f s; noise after the restart (%.1f s): %.3f Mev/s in total, %.4f Mev/s without "
                  "%d defect pixel(s)", settled, SETTLE_CHECK_S, events.size / SETTLE_CHECK_S / 1e6,
                  counts[~defect].sum() / SETTLE_CHECK_S / 1e6, int(defect.sum()))
@@ -242,7 +241,8 @@ class EventCamera:
     # ---- recording ----
 
     def record(self, seconds: float) -> np.ndarray:
-        """Record events: skip limits.WARMUP_S (start-up burst), then collect `seconds` of camera time.
+        """Record events: skip limits.WARMUP_S after start(), then collect `seconds` of camera time. (The start-up
+        burst itself is removed once, by the settle in open().)
 
         Returns a structured array with fields x, y, p, t (t in us, 0 = end of the warm-up).
         Stops early with a warning if more than limits.MAX_EVENTS events arrive, and then restarts the stream

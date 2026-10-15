@@ -19,7 +19,7 @@ from typing import Protocol
 
 import numpy as np
 
-from agentic_ode.hardware.devices.evcam import analysis, store
+from agentic_ode.hardware.devices.evcam import analysis, limits, store
 from agentic_ode.hardware.devices.evcam.driver import EventCamera
 from agentic_ode.hardware.devices.evcam.fake import FakeEventCamera
 from agentic_ode.hardware.standard import ActionSpec, Instrument, Result
@@ -115,7 +115,8 @@ class EvcamInstrument(Instrument):
         """Set one bias (bias_diff, bias_diff_on, bias_diff_off, bias_fo, bias_hpf, bias_refr) and return the value read back; higher bias_diff_on/off = less noise, less sensitive."""  # noqa: E501
         return Result.success({"name": name, "value": self.camera().set_bias(name, value)})
 
-    def find_hot_pixels(self, seconds: float = 0.5, top: int = 64, min_rate_hz: float = 20000) -> Result:
+    def find_hot_pixels(self, seconds: float = 0.5, top: int = limits.MAX_MASK_SLOTS,
+                        min_rate_hz: float = limits.MAX_PIXEL_RATE_HZ) -> Result:
         """Make a short recording (not saved) and list pixels firing at least min_rate_hz, busiest first; it does not mask them."""  # noqa: E501
         events = self.camera().record(seconds)
         hot = analysis.hot_pixels(events, seconds, top, min_rate_hz)
@@ -125,7 +126,8 @@ class EvcamInstrument(Instrument):
         """Silence the given (x, y) pixels (at most 64 in total); returns the newly masked pixels and the slots used."""
         cam = self.camera()
         new = cam.mask_pixels(pixels)
-        return Result.success({"newly_masked": new, "slots_used": len(cam.state["mask"]), "slots_total": 64})
+        return Result.success({"newly_masked": new, "slots_used": len(cam.state["mask"]),
+                               "slots_total": limits.MAX_MASK_SLOTS})
 
     def clear_mask(self) -> Result:
         """Unmask all masked pixels."""

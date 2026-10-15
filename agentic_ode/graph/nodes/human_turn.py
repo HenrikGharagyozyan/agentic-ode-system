@@ -5,17 +5,12 @@ from __future__ import annotations
 from langgraph.types import interrupt
 
 from agentic_ode.agents.guards import FINISH, accepted, finish_allowed
-from agentic_ode.core.dialogue import decision_field
+from agentic_ode.core.dialogue import decision_field, last_orchestrator_turn
 from agentic_ode.core.state import END_ROUTE, DialogueState, Role
+from agentic_ode.graph.routing import back_to_orchestrator
+from agentic_ode.graph.routing import note as _note
 
 STEPS_NEEDING_APPROVAL = (Role.EXECUTOR.value, FINISH)
-
-
-def last_orchestrator_turn(state: DialogueState) -> str:
-    for turn in reversed(state["dialogue"]):
-        if turn["role"] == Role.ORCHESTRATOR:
-            return turn["content"]
-    return ""
 
 
 def question_of(content: str) -> str:
@@ -45,11 +40,6 @@ def human(state: DialogueState) -> dict:
     return {"dialogue": [reply_turn], "route": step, "pending_step": ""}
 
 
-def _note(text: str) -> dict:
-    """A turn written by the graph itself, not by a person or a model."""
-    return {"role": Role.SYSTEM.value, "content": text}
-
-
 def _back(turns: list[dict], refused: str = "") -> dict:
     """The pending step does not run: give the turn back to the orchestrator."""
-    return {"dialogue": turns, "route": Role.ORCHESTRATOR.value, "pending_step": "", "refused_step": refused}
+    return back_to_orchestrator(turns, pending_step="", refused_step=refused)
