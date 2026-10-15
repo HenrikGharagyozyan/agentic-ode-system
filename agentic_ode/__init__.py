@@ -2,7 +2,7 @@
 
 from agentic_ode.core.config import Settings
 from agentic_ode.graph import build_graph
-from agentic_ode.runner import RunOutcome, run_task
+from agentic_ode.runtime.runner import RunOutcome, run_task
 
 __version__ = "0.2.0"
 
