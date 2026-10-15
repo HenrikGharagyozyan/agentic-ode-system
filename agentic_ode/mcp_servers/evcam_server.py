@@ -206,4 +206,4 @@ def spectrum(recording_id: str, bin_us: int = 100, fmin_hz: float = 20, fmax_hz:
 if __name__ == "__main__":
     # stdout carries the MCP messages, so all logging goes to stderr
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(message)s")
-    mcp.run()  # default transport: stdio
+    mcp.run(show_banner=False)  # default transport: stdio; no banner on stderr
