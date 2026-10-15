@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +21,10 @@ from agentic_ode.state import DialogueState, Turn, initial_state
 from agentic_ode.transcript import save_transcript
 
 RECURSION_LIMIT = 60
+# camera runs: every camera action costs one orchestrator decision and up to 4 graph steps
+# (orchestrator -> hw_decide -> hw_approve -> hw_call), so they get more of both
+CAMERA_MAX_DECISIONS = 20
+CAMERA_RECURSION_LIMIT = 150
 
 
 @dataclass(frozen=True)
@@ -49,7 +53,10 @@ def run_task(
     returns the person's reply; the same thread is then resumed with that reply.
     camera=True: start the event camera MCP server (EVCAM_FAKE=1 -> fake camera) with ONE session for the whole
     run, human pauses included, and give its tools to the executor. The session is closed at the end.
+    Camera runs get at least CAMERA_MAX_DECISIONS decisions and CAMERA_RECURSION_LIMIT graph steps.
     """
+    if camera:
+        settings = replace(settings, max_decisions=max(settings.max_decisions, CAMERA_MAX_DECISIONS))
     llm = llm or make_llm(settings)
     run_dir = new_run_dir(settings.runs_dir)
     meta = {
@@ -63,7 +70,8 @@ def run_task(
     with (evcam_session() if camera else nullcontext()) as session:  # nullcontext() gives session = None
         graph = build_graph(llm, run_dir, settings, camera_tools=session.tools() if session else None)
         state = initial_state(task_file.read_text())
-        config = {"recursion_limit": RECURSION_LIMIT, "configurable": {"thread_id": run_dir.name}}
+        limit = CAMERA_RECURSION_LIMIT if camera else RECURSION_LIMIT
+        config = {"recursion_limit": limit, "configurable": {"thread_id": run_dir.name}}
         graph_input = state
         printed = 0
         while True:
