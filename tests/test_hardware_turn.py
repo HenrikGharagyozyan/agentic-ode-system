@@ -3,14 +3,17 @@ camera, reached through agentic_ode.mcp_client in memory (real MCP protocol, no 
 
 import json
 import logging
+import time
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import StructuredTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.types import Command
 
 from agentic_ode import runner
-from agentic_ode.agents import Decision, prompts
+from agentic_ode.agents import Decision, Executor, prompts
 from agentic_ode.cli import _auto_ask
 from agentic_ode.graph import build_graph
 from agentic_ode.mcp_client import McpSession
@@ -223,6 +226,89 @@ def test_other_provider_errors_are_not_swallowed(session, tmp_path, settings):
         graph_with_camera(llm, session, tmp_path, settings).invoke(initial_state("t"), CONFIG)
 
 
+# ---- wrong arguments and repeated failures (first real run, 2026-10-15) ----
+
+def test_unknown_arguments_are_dropped_and_named(session, tmp_path, settings):
+    # the real model called camera_info({"serial": "None"}); camera_info has no parameters
+    llm = HwLLM([hw("info"), hw("record"), "finish"],
+                [[("camera_info", {"serial": "None"})], [("record", {"seconds": 0.5, "foo": 1})]])
+    state = graph_with_camera(llm, session, tmp_path, settings).invoke(initial_state("t"), CONFIG)
+    info, rec = [t["content"] for t in state["dialogue"] if t["role"] == Role.HARDWARE]
+    ok = '\nresult: {"ok": true'
+    assert info.startswith("camera call: camera_info({})\nignored unknown argument(s): serial" + ok)
+    assert rec.startswith('camera call: record({"seconds": 0.5})\nignored unknown argument(s): foo' + ok)
+    assert [(r["tool"], r["args"], r["ok"]) for r in state["camera"]] == [("camera_info", {}, True),
+                                                                          ("record", {"seconds": 0.5}, True)]
+    assert state["stop_reason"] == "finish"
+
+
+def test_camera_schemas_say_no_other_arguments(session, tmp_path, settings):
+    no_flag = StructuredTool(name="x", description="d", func=lambda a: "{}",
+                             args_schema={"type": "object", "properties": {"a": {"type": "integer"}}})
+    ex = Executor(FakeLLM([]), settings, tmp_path, camera_tools=session.tools() + [no_flag])
+    assert all(t.args_schema["additionalProperties"] is False for t in ex.camera_tools)
+    assert convert_to_openai_tool(ex.camera_tools[-1])["function"]["parameters"]["additionalProperties"] is False
+    assert "additionalProperties" not in no_flag.args_schema  # the original tool is not changed
+
+
+def test_the_same_failed_call_is_not_run_again(session, tmp_path, settings):
+    llm = HwLLM([hw("record 10 s")] * 3 + ["finish"],
+                [[("record", {"seconds": 10})],                # fails: more than 5 s
+                 [("record", {"seconds": 10, "extra": 1})],    # the same call after dropping "extra": not run
+                 [("record", {"seconds": 1.0})]])              # a changed call: runs
+    state = graph_with_camera(llm, session, tmp_path, settings).invoke(initial_state("t"), CONFIG)
+    assert [(r["args"], r["ok"]) for r in state["camera"]] == [({"seconds": 10}, False), ({"seconds": 1.0}, True)]
+    (note,) = [n for n in notes(state) if "already failed" in n]
+    assert note.startswith('The camera call record({"seconds": 10}) did NOT run: this exact call already failed '
+                           "with: ValueError: duration must be between 0.05 and 5.0 s")
+    assert note.endswith("; change the call or choose another step.")
+    assert state["stop_reason"] == "finish"
+
+
+class RetryLLM:
+    """A model whose bindings are real LangChain runnables (so with_retry really retries). The binding WITH
+    tool_choice fails with `forced_errors` one after the other, then answers; calls are counted."""
+
+    def __init__(self, forced_errors):
+        self.forced_errors = list(forced_errors)
+        self.calls = {"forced": 0, "free": 0}
+
+    def bind_tools(self, tools, **kwargs):
+        kind = "forced" if "tool_choice" in kwargs else "free"
+
+        def run(messages):
+            self.calls[kind] += 1
+            if kind == "forced" and self.forced_errors:
+                raise self.forced_errors.pop(0)
+            return AIMessage(content="", tool_calls=[{"name": "camera_info", "args": {}, "id": "c0"}])
+
+        return RunnableLambda(run)
+
+
+def camera_executor(llm, tmp_path, settings):
+    tool = StructuredTool.from_function(lambda: "{}", name="camera_info", description="stub")
+    return Executor(llm, settings, tmp_path, camera_tools=[tool])
+
+
+def test_tool_choice_rejection_is_not_retried(tmp_path, settings):
+    llm = RetryLLM([ValueError("Error code: 400 - tool_choice is not supported by this model")] * 10)
+    ex = camera_executor(llm, tmp_path, settings)
+    t0 = time.monotonic()
+    reply = ex.camera_reply([HumanMessage("x")])
+    assert reply.tool_calls[0]["name"] == "camera_info"
+    assert llm.calls == {"forced": 1, "free": 1}  # one forced try (no retries), then one try without tool_choice
+    assert time.monotonic() - t0 < 1  # no retry waits
+    ex.camera_reply([HumanMessage("y")])
+    assert llm.calls == {"forced": 1, "free": 2}  # the binding without tool_choice is kept
+
+
+def test_other_errors_still_get_the_normal_retries(tmp_path, settings):
+    llm = RetryLLM([RuntimeError("provider overloaded")])  # fails once, then works
+    reply = camera_executor(llm, tmp_path, settings).camera_reply([HumanMessage("x")])
+    assert reply.tool_calls[0]["name"] == "camera_info"
+    assert llm.calls == {"forced": 2, "free": 0}  # retried with tool_choice, never fell back
+
+
 # ---- edge cases without the real server ----
 
 def test_no_camera_in_this_run(tmp_path, settings):
@@ -257,6 +343,7 @@ def test_camera_paragraphs_only_in_camera_runs(settings):
     assert prompts.CAMERA_SCIENTIST in prompts.scientist(settings, camera=True)
     assert "event camera" not in prompts.scientist(settings)  # (the HW2 bench has its own simulated camera)
     assert "exactly ONE tool call" in prompts.hardware(settings)
+    assert "A tool without parameters is called with an empty argument object {}." in prompts.hardware(settings)
 
 
 def test_hardware_turn_label(tmp_path):
