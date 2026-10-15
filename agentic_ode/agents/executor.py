@@ -55,9 +55,23 @@ class Executor:
         self.llm = with_retry(llm.bind_tools(self.tools), settings.provider_retries)
         # The event camera's MCP tools (HW3), in a SEPARATE binding of the same model: only the hardware turn
         # uses it. The normal tool loop above never sees them, so no camera call can bypass the approval step.
+        # tool_choice="any" forces the model to make a tool call (see camera_reply() for models that reject it).
+        self._raw_llm = llm
         self.camera_tools = list(camera_tools or [])
-        self.camera_llm = (with_retry(llm.bind_tools(self.camera_tools), settings.provider_retries)
+        self.camera_llm = (with_retry(llm.bind_tools(self.camera_tools, tool_choice="any"), settings.provider_retries)
                            if self.camera_tools else None)
+
+    def camera_reply(self, messages: list):
+        """One model call with the camera tools (the hardware turn). If the provider rejects tool_choice, retry ONCE
+        without it and keep that binding for the rest of the run; a text answer is then handled by the caller."""
+        try:
+            return self.camera_llm.invoke(messages)
+        except Exception as e:
+            if "tool_choice" not in str(e).lower():
+                raise
+            log.warning("the provider rejected tool_choice (%s); retrying once without it", e)
+            self.camera_llm = with_retry(self._raw_llm.bind_tools(self.camera_tools), self.settings.provider_retries)
+            return self.camera_llm.invoke(messages)
 
     def __call__(self, state: DialogueState) -> dict:
         messages = specialist_messages(self.prompt, state, Role.EXECUTOR)
