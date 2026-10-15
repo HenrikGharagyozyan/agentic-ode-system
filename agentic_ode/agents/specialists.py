@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 
 from agentic_ode.agents import prompts
 from agentic_ode.agents.context import specialist_messages
@@ -24,8 +25,9 @@ class TextSpecialist:
         return {"dialogue": [{"role": self.role.value, "content": text_of(reply)}]}
 
 
-def make_scientist(llm, settings: Settings) -> TextSpecialist:
-    return TextSpecialist(llm, settings, Role.SCIENTIST, prompts.scientist)
+def make_scientist(llm, settings: Settings, camera: bool = False) -> TextSpecialist:
+    """camera=True: the prompt also asks for camera measurement plans (in text; the scientist never calls tools)."""
+    return TextSpecialist(llm, settings, Role.SCIENTIST, partial(prompts.scientist, camera=camera))
 
 
 def make_general(llm, settings: Settings) -> TextSpecialist:
