@@ -15,7 +15,7 @@ from pathlib import Path
 from agentic_ode.agents.context import decision_field
 from agentic_ode.config import PROJECT_ROOT
 from agentic_ode.reporting.diagram import graph_png
-from agentic_ode.state import Role
+from agentic_ode.state import Role, role_label
 from agentic_ode.tools import last_rmse_line, rmse_lines
 from agentic_ode.transcript import load_transcript
 
@@ -90,7 +90,7 @@ def render_html(run_dir: Path, data: dict) -> tuple[str, str]:
     rows = []
     for i, t in enumerate(dialogue):
         what, reason = describe(i, t, runs)
-        rows.append(f"<tr><td>{i}</td><td>{t['role']}</td><td>{what}</td><td>{reason}</td></tr>")
+        rows.append(f"<tr><td>{i}</td><td>{role_label(t['role'])}</td><td>{what}</td><td>{reason}</td></tr>")
 
     if good:
         result = (f"<p>The script <code>{html.escape(final['filename'])}</code> ran with exit code 0 in executor turn "
