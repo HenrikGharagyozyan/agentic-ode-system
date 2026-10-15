@@ -1,6 +1,8 @@
-"""StateGraph: orchestrator routes to scientist / general / executor / human / END; specialists return to it.
+"""StateGraph: orchestrator routes to scientist / general / executor / human / hardware / END; specialists return to it.
 
 After the person's reply, human runs the accepted step (executor or END) or returns to the orchestrator.
+The hardware turn (HW3): hw_decide (the executor's model picks ONE camera call) -> hw_approve (only for setting
+changes) -> hw_call (runs it, writes the result) -> orchestrator.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, StateGraph
 
 from agentic_ode.agents import Executor, Orchestrator, human, make_general, make_scientist
+from agentic_ode.agents.hardware import HW_APPROVE, HW_CALL, HW_DECIDE, HardwareCall, HardwareDecide, hw_approve
 from agentic_ode.config import Settings
 from agentic_ode.state import END_ROUTE, SPECIALISTS, DialogueState, Role
 
@@ -19,30 +22,41 @@ def route(state: DialogueState) -> str:
     return state["route"]
 
 
-def build_graph(llm, workdir: Path, settings: Settings | None = None):
-    """Compile the five-node graph. `workdir` is where the executor writes and runs scripts.
+def build_graph(llm, workdir: Path, settings: Settings | None = None, camera_tools: list | None = None):
+    """Compile the graph. `workdir` is where the executor writes and runs scripts.
+    `camera_tools` (the event camera's MCP tools) go to the executor only, never to another role.
 
     The graph has an in-memory checkpointer, so every invoke/stream needs a thread_id in its config.
     """
     settings = settings or Settings()
+    camera = bool(camera_tools)
+    executor = Executor(llm, settings, workdir, camera_tools)
+    orch = Role.ORCHESTRATOR.value
     g = StateGraph(DialogueState)
-    g.add_node(Role.ORCHESTRATOR.value, Orchestrator(llm, settings))
-    g.add_node(Role.SCIENTIST.value, make_scientist(llm, settings))
+    g.add_node(orch, Orchestrator(llm, settings, camera))
+    g.add_node(Role.SCIENTIST.value, make_scientist(llm, settings, camera))
     g.add_node(Role.GENERAL.value, make_general(llm, settings))
-    g.add_node(Role.EXECUTOR.value, Executor(llm, settings, workdir))
+    g.add_node(Role.EXECUTOR.value, executor)
     g.add_node(Role.HUMAN.value, human)
+    g.add_node(HW_DECIDE, HardwareDecide(executor, settings))
+    g.add_node(HW_APPROVE, hw_approve)
+    g.add_node(HW_CALL, HardwareCall(executor))
 
-    g.set_entry_point(Role.ORCHESTRATOR.value)
+    g.set_entry_point(orch)
     g.add_conditional_edges(
-        Role.ORCHESTRATOR.value,
+        orch,
         route,
-        {**{r.value: r.value for r in SPECIALISTS}, Role.HUMAN.value: Role.HUMAN.value, END_ROUTE: END},
+        {**{r.value: r.value for r in SPECIALISTS}, Role.HUMAN.value: Role.HUMAN.value,
+         Role.HARDWARE.value: HW_DECIDE, END_ROUTE: END},
     )
     for role in SPECIALISTS:
-        g.add_edge(role.value, Role.ORCHESTRATOR.value)
+        g.add_edge(role.value, orch)
     g.add_conditional_edges(
         Role.HUMAN.value,
         route,
-        {Role.ORCHESTRATOR.value: Role.ORCHESTRATOR.value, Role.EXECUTOR.value: Role.EXECUTOR.value, END_ROUTE: END},
+        {orch: orch, Role.EXECUTOR.value: Role.EXECUTOR.value, END_ROUTE: END},
     )
+    g.add_conditional_edges(HW_DECIDE, route, {HW_APPROVE: HW_APPROVE, HW_CALL: HW_CALL, orch: orch})
+    g.add_conditional_edges(HW_APPROVE, route, {HW_CALL: HW_CALL, orch: orch})
+    g.add_edge(HW_CALL, orch)
     return g.compile(checkpointer=InMemorySaver())

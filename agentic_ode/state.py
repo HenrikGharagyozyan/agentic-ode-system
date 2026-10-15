@@ -17,9 +17,20 @@ class Role(StrEnum):
     EXECUTOR = "executor"
     HUMAN = "human"
     SYSTEM = "system"  # notes written by the graph itself, e.g. "the step did NOT run"
+    HARDWARE = "hardware"  # the executor's camera turn: one MCP tool call and its result (HW3)
 
 
 SPECIALISTS = (Role.SCIENTIST, Role.GENERAL, Role.EXECUTOR)
+ROLE_LABELS = {Role.HARDWARE: "executor (hardware)"}  # how a role is shown in transcripts and the report
+
+# camera tools (HW3): setting changes need the human's approval in the hardware turn; measurements run directly
+# and a successful one allows finish; the other tools (camera_info, get_settings) only read and run directly
+CAMERA_SETTING_TOOLS = ("set_bias", "mask_pixels", "clear_mask", "set_roi", "clear_roi")
+CAMERA_MEASUREMENT_TOOLS = ("record", "spectrum", "find_hot_pixels")
+
+
+def role_label(role: str) -> str:
+    return ROLE_LABELS.get(role, role)
 
 
 class Turn(TypedDict):
@@ -51,15 +62,28 @@ class ExperimentRecord(TypedDict):
     images: dict
 
 
+class CameraRecord(TypedDict):
+    """One real camera tool call of a hardware turn, kept outside the text so the finish guard can trust it."""
+
+    turn_index: int  # index in the dialogue of the hardware turn that shows this call
+    tool: str
+    args: dict
+    ok: bool  # the tool's own "ok" field
+    result_line: str  # the result JSON exactly as written in the hardware turn
+
+
 class DialogueState(TypedDict):
     dialogue: Annotated[list[Turn], operator.add]
     decisions: Annotated[int, operator.add]  # number of orchestrator decisions so far
     runs: Annotated[list[RunRecord], operator.add]
     experiments: Annotated[list[ExperimentRecord], operator.add]  # focusing-tool calls
+    camera: Annotated[list[CameraRecord], operator.add]  # camera tool calls of hardware turns
     route: str  # next node chosen by the orchestrator, or END_ROUTE
     stop_reason: str
     pending_step: str  # step that waits for the human's approval ("executor", "finish"), or ""
     refused_step: str  # step the human refused just now; the next orchestrator decision may not choose it
+    hw_call: dict  # camera call {"name", "args"} chosen by hw_decide, waiting to run; {} when there is none
+    refused_calls: Annotated[list[dict], operator.add]  # camera calls the human refused; never asked again
 
 
 def initial_state(user_message: str) -> DialogueState:
@@ -68,15 +92,18 @@ def initial_state(user_message: str) -> DialogueState:
         "decisions": 0,
         "runs": [],
         "experiments": [],
+        "camera": [],
         "route": "",
         "stop_reason": "",
         "pending_step": "",
         "refused_step": "",
+        "hw_call": {},
+        "refused_calls": [],
     }
 
 
 def render_dialogue(dialogue: list[Turn]) -> str:
     """The dialogue as plain text, the way every node reads it."""
     return "\n\n".join(
-        f"### Turn {i} [{t['role']}]\n{t['content']}" for i, t in enumerate(dialogue)
+        f"### Turn {i} [{role_label(t['role'])}]\n{t['content']}" for i, t in enumerate(dialogue)
     )

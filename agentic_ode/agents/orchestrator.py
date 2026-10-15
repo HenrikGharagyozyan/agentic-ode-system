@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from agentic_ode.agents import prompts
 from agentic_ode.config import Settings
 from agentic_ode.llm import with_retry
-from agentic_ode.state import END_ROUTE, DialogueState, Role, render_dialogue
+from agentic_ode.state import CAMERA_MEASUREMENT_TOOLS, END_ROUTE, DialogueState, Role, render_dialogue
 from agentic_ode.tools import last_rmse_line
 
 log = logging.getLogger(__name__)
@@ -21,8 +21,9 @@ HUMAN = "human"
 
 
 class Decision(BaseModel):
-    next: Literal["scientist", "general", "executor", "human", "finish"] = Field(
-        description="The role that gets the next turn, human to ask the person, or finish."
+    next: Literal["scientist", "general", "executor", "human", "hardware", "finish"] = Field(
+        description="The role that gets the next turn, human to ask the person, hardware for one event camera "
+        "action by the executor (camera runs only), or finish."
     )
     instruction: str = Field(
         description="What that role should do now. "
@@ -49,8 +50,20 @@ class Decision(BaseModel):
 
 def finish_allowed(state: DialogueState) -> bool:
     """True if some executor turn carries a test RMSE parsed from the stdout of a run with exit code 0,
-    or the FOCUS_ENHANCEMENT line of a real focusing-tool call."""
+    or the FOCUS_ENHANCEMENT line of a real focusing-tool call, or some hardware turn carries the result of a
+    successful camera measurement (record, spectrum, find_hot_pixels with ok: true; a spectrum without a peak
+    counts too: "no flicker" is a valid result)."""
     dialogue = state["dialogue"]
+    for rec in state.get("camera", []):
+        i = rec["turn_index"]
+        if (
+            rec["ok"]
+            and rec["tool"] in CAMERA_MEASUREMENT_TOOLS
+            and 0 <= i < len(dialogue)
+            and dialogue[i]["role"] == Role.HARDWARE
+            and rec["result_line"] in dialogue[i]["content"]
+        ):
+            return True
     for exp in state.get("experiments", []):
         i = exp["turn_index"]
         in_turn = 0 <= i < len(dialogue) and dialogue[i]["role"] == Role.EXECUTOR
@@ -72,9 +85,9 @@ def finish_allowed(state: DialogueState) -> bool:
 class Orchestrator:
     """Reads the whole dialogue and picks the next role. Writes no theory or code and has no tools."""
 
-    def __init__(self, llm, settings: Settings):
+    def __init__(self, llm, settings: Settings, camera: bool = False):
         self.settings = settings
-        self.prompt = prompts.orchestrator(settings)
+        self.prompt = prompts.orchestrator(settings, camera)
         self.decide = with_retry(
             llm.with_structured_output(Decision, method="function_calling"), settings.provider_retries
         )

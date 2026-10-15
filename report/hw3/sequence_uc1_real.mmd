@@ -1,0 +1,56 @@
+%% Sequence of run 20261015-171638: UC1 calibration on the REAL camera (covered), 5 orchestrator decisions.
+%% Every orchestrator decision and every hw_decide is one model call (not drawn).
+sequenceDiagram
+    autonumber
+    actor P as person (CLI)
+    participant O as orchestrator
+    participant D as hw_decide<br/>(executor model)
+    participant A as hw_approve
+    participant W as hw_call
+    participant S as MCP server evcam<br/>(stdio)
+    participant C as event camera<br/>(IMX636, covered)
+
+    P->>O: task uc1_calibration.md
+
+    Note over O: decision 1: hardware, "find_hot_pixels"
+    O->>D: instruction
+    D->>W: find_hot_pixels({"seconds": 0.5, "top": 64, "min_rate_hz": 20000}) (measurement)
+    W->>S: tools/call find_hot_pixels
+    S->>C: open + 8 s settle (first use), 0.5 s recording (not saved)
+    C-->>S: events
+    S-->>W: hot pixels (926, 151) and (1053, 704), 4.47 MHz each
+    W-->>O: hardware turn (call + result verbatim)
+
+    Note over O: decision 2: hardware, mask the 2 pixels
+    O->>D: instruction
+    D->>A: mask_pixels({"pixels": [{"x": 926, "y": 151}, {"x": 1053, "y": 704}]})
+    A->>P: interrupt: approve this camera call?
+    P-->>A: yes
+    A->>W: approved
+    W->>S: tools/call mask_pixels
+    S-->>W: refused by the schema: pixels must be [x, y] pairs (ok: false)
+    W-->>O: hardware turn with the error
+
+    Note over O: decision 3: hardware, mask_pixels with [x, y] pairs
+    O->>D: instruction
+    D->>A: mask_pixels({"pixels": [[926, 151], [1053, 704]]})
+    A->>P: interrupt: approve this camera call?
+    P-->>A: yes
+    A->>W: approved
+    W->>S: tools/call mask_pixels
+    S->>C: digital event mask, 2 slots
+    S-->>W: ok, slots_used 2
+    W-->>O: hardware turn
+
+    Note over O: decision 4: hardware, "record 2 seconds"
+    O->>D: instruction
+    D->>W: record({"seconds": 2})
+    W->>S: tools/call record
+    S->>C: stream 2 s
+    C-->>S: 2,755 events
+    S-->>W: ok, 0.001378 Mev/s, no warning
+    W-->>O: hardware turn
+
+    Note over O: decision 5: human, kind hard, proposed_next finish
+    O->>P: human stop: "Shall I finish and report this noise level?" (1377.5 events per second)
+    P-->>O: yes → END (stop reason: finish)

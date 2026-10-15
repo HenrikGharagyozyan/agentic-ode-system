@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from agentic_ode.state import role_label
+
 JSON_NAME = "transcript.json"
 MD_NAME = "transcript.md"
 
@@ -37,5 +39,5 @@ def _markdown(name: str, data: dict, meta: dict) -> str:
         "",
     ]
     for i, t in enumerate(data["dialogue"]):
-        lines += [f"## Turn {i} [{t['role']}]", "", "````text", t["content"], "````", ""]
+        lines += [f"## Turn {i} [{role_label(t['role'])}]", "", "````text", t["content"], "````", ""]
     return "\n".join(lines)

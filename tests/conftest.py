@@ -22,6 +22,7 @@ class FakeLLM:
         self.decisions = list(decisions)
         self.decision_calls = 0
         self.bound_tools: list[list[str]] = []
+        self.tool_choices: list = []  # the tool_choice of each bind_tools call (None when not given)
         self.executor_script = executor_script
         self.scripts = 0
 
@@ -42,8 +43,9 @@ class FakeLLM:
         return AIMessage(content="plan text")
 
     # executor
-    def bind_tools(self, tools):
+    def bind_tools(self, tools, **kwargs):
         self.bound_tools.append([t.name for t in tools])
+        self.tool_choices.append(kwargs.get("tool_choice"))
         outer = self
 
         class _Bound:
