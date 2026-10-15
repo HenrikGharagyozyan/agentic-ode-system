@@ -74,12 +74,12 @@ def session(tmp_path, monkeypatch):
     """The evcam MCP server with the fake camera (pwm scene), in memory; recordings and log in tmp_path."""
     monkeypatch.setenv("EVCAM_FAKE", "1")
     monkeypatch.setenv("EVCAM_FAKE_SCENE", "pwm")
-    monkeypatch.setattr(evcam_server, "RECORDINGS_DIR", tmp_path / "evcam")
-    monkeypatch.setattr(evcam_server, "LOG_FILE", tmp_path / "evcam" / "tool_log.jsonl")
-    evcam_server._close_camera()
+    monkeypatch.setattr(evcam_server.instrument, "recordings_dir", tmp_path / "evcam")
+    monkeypatch.setattr(evcam_server.tool_log, "path", tmp_path / "evcam" / "tool_log.jsonl")
+    evcam_server.instrument.close()
     with McpSession(transport=evcam_server.mcp, timeout_s=60) as s:
         yield s
-    evcam_server._close_camera()
+    evcam_server.instrument.close()
 
 
 def graph_with_camera(llm, session, tmp_path, settings):

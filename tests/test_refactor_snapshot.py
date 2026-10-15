@@ -100,11 +100,11 @@ def fake_server(tmp_path, monkeypatch):
     """Fake camera (pwm scene, seed 0), recordings and log in tmp_path, no camera open before and after."""
     monkeypatch.setenv("EVCAM_FAKE", "1")
     monkeypatch.delenv("EVCAM_FAKE_SCENE", raising=False)
-    monkeypatch.setattr(evcam_server, "RECORDINGS_DIR", tmp_path)
-    monkeypatch.setattr(evcam_server, "LOG_FILE", tmp_path / "tool_log.jsonl")
-    evcam_server._close_camera()
+    monkeypatch.setattr(evcam_server.instrument, "recordings_dir", tmp_path)
+    monkeypatch.setattr(evcam_server.tool_log, "path", tmp_path / "tool_log.jsonl")
+    evcam_server.instrument.close()
     yield
-    evcam_server._close_camera()
+    evcam_server.instrument.close()
 
 
 def test_fake_camera_results_snapshot(fake_server):
