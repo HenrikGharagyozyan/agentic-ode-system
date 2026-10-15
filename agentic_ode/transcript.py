@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agentic_ode.state import role_label
+from agentic_ode.core.dialogue import role_label
 
 JSON_NAME = "transcript.json"
 MD_NAME = "transcript.md"

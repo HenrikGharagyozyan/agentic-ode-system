@@ -15,7 +15,7 @@ from langgraph.graph import END, StateGraph
 from agentic_ode.agents import Executor, Orchestrator, human, make_general, make_scientist
 from agentic_ode.agents.hardware import HW_APPROVE, HW_CALL, HW_DECIDE, HardwareCall, HardwareDecide, hw_approve
 from agentic_ode.core.config import Settings
-from agentic_ode.state import END_ROUTE, SPECIALISTS, DialogueState, Role
+from agentic_ode.core.state import END_ROUTE, SPECIALISTS, DialogueState, Role
 
 
 def route(state: DialogueState) -> str:

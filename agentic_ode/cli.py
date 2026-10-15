@@ -9,7 +9,7 @@ from pathlib import Path
 
 from agentic_ode.core.config import PROJECT_ROOT, Settings
 from agentic_ode.core.llm import ConfigurationError
-from agentic_ode.state import Turn
+from agentic_ode.core.state import Turn
 
 DEFAULT_TASK = PROJECT_ROOT / "task5.md"
 

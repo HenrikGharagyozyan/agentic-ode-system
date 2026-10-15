@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-from agentic_ode.state import DialogueState, Role, render_dialogue
+from agentic_ode.core.dialogue import render_dialogue
+from agentic_ode.core.state import DialogueState, Role
 
 
 def decision_field(content: str, key: str) -> str:

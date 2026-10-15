@@ -10,8 +10,9 @@ from pydantic import BaseModel, Field
 
 from agentic_ode.agents import prompts
 from agentic_ode.core.config import Settings
+from agentic_ode.core.dialogue import render_dialogue
 from agentic_ode.core.llm import with_retry
-from agentic_ode.state import CAMERA_MEASUREMENT_TOOLS, END_ROUTE, DialogueState, Role, render_dialogue
+from agentic_ode.core.state import CAMERA_MEASUREMENT_TOOLS, END_ROUTE, DialogueState, Role
 from agentic_ode.tools import last_rmse_line
 
 log = logging.getLogger(__name__)
