@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pytest
 
-from agentic_ode.hardware.evcam.analysis import hot_pixels, spectrum, summary
+from agentic_ode.hardware.evcam.analysis import fundamental, hot_pixels, spectrum, summary
 from agentic_ode.hardware.evcam.connector import EVENT_DTYPE
 
 
@@ -16,13 +16,13 @@ def make_events(x, y, p, t):
     return ev[np.argsort(ev["t"], kind="stable")]
 
 
-def blinking_light(f_hz, seconds, rng, events_per_edge=20, jitter_us=200, noise=20_000):
-    """A light that blinks at f_hz with 50 % duty: ON events at each rising edge, OFF events at each falling
-    edge, each spread by jitter_us (pixels do not all react at once), plus `noise` random events."""
+def blinking_light(f_hz, seconds, rng, events_per_edge=20, jitter_us=200, noise=20_000, duty=0.5):
+    """A light that blinks at f_hz, on for `duty` of each period: ON events at each rising edge, OFF events at each
+    falling edge, each spread by jitter_us (pixels do not all react at once), plus `noise` random events."""
     period = 1e6 / f_hz
     rising = np.arange(0, seconds * 1e6 - period, period)
     t_on = np.repeat(rising, events_per_edge) + rng.normal(0, jitter_us, rising.size * events_per_edge)
-    t_off = t_on + period / 2
+    t_off = t_on + duty * period
     t_noise = rng.uniform(0, seconds * 1e6, noise)
     t = np.concatenate([t_on, t_off, t_noise])
     p = np.concatenate([np.ones(t_on.size), np.zeros(t_off.size), rng.integers(0, 2, noise)])
@@ -121,6 +121,45 @@ def test_spectrum_fmin_hides_slow_drift():
     assert abs(spectrum(ev, fmin_hz=0.5)["dominant_hz"] - 2) <= 0.5
 
 
+# ---- fundamental frequency (first real-camera UC2 run, 2026-10-15: 480 Hz was reported instead of 240) ----
+
+def test_fundamental_of_the_real_run_peaks():
+    # the peaks of that run, strongest first; resolution 5.787 Hz (a 0.17 s recording)
+    assert fundamental([480.324, 237.269, 960.648, 717.593, 1440.972], 5.787) == 237.269
+
+
+@pytest.mark.parametrize("peaks, expected", [
+    ([240.0], 240.0),
+    ([480.0, 240.0, 720.0], 240.0),  # the lowest peak that explains all others
+    ([240.0, 333.0], None),  # two lights that are not related: no fundamental
+    ([], None),
+])
+def test_fundamental_cases(peaks, expected):
+    assert fundamental(peaks, 0.5) == expected
+
+
+def test_spectrum_reports_the_fundamental_when_a_harmonic_is_strongest():
+    # 25 % on-time with short edges: 2f is the strongest peak, like on the real camera
+    s = spectrum(blinking_light(240, 2.0, np.random.default_rng(4), duty=0.25, jitter_us=50))
+    res = s["resolution_hz"]
+    assert abs(s["dominant_hz"] - 480) <= res
+    assert abs(s["fundamental_hz"] - 240) <= res
+    h2 = s["harmonics"][0]  # harmonics are of the fundamental now
+    assert h2["k"] == 2 and abs(h2["hz"] - 480) <= 2 * res
+
+
+def test_spectrum_fundamental_equals_dominant_for_a_symmetric_blink():
+    s = spectrum(blinking_light(240, 2.0, np.random.default_rng(5)))
+    assert s["fundamental_hz"] == s["dominant_hz"] and abs(s["fundamental_hz"] - 240) <= s["resolution_hz"]
+
+
+def test_spectrum_warns_about_short_recordings():
+    short = spectrum(blinking_light(240, 0.5, np.random.default_rng(6)))
+    assert short["warning"] == ("the recording is only 0.50 s long: the frequency resolution is 2.0 Hz; "
+                                "record at least 1 s for a precise frequency")
+    assert "warning" not in spectrum(blinking_light(240, 2.0, np.random.default_rng(6)))
+
+
 @pytest.mark.parametrize("seed", range(5))
 def test_spectrum_random_noise_has_no_peak(seed):
     # pure random events (no rhythm): the strongest value stays below min_snr = 8
@@ -128,6 +167,7 @@ def test_spectrum_random_noise_has_no_peak(seed):
     t = rng.integers(0, 2_000_000, 20_000)
     s = spectrum(make_events(np.zeros(t.size), np.zeros(t.size), rng.integers(0, 2, t.size), t))
     assert s["dominant_hz"] is None and s["peaks"] == [] and s["harmonics"] == []
+    assert s["fundamental_hz"] is None
     assert s["noise_floor"] > 0
 
 
