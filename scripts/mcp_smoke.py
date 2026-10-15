@@ -1,16 +1,23 @@
-"""Smoke test of the evcam MCP server through a real MCP client (in memory: no separate process).
+"""Smoke test of the evcam MCP server through a real MCP client.
 
-Lists the tools, then calls camera_info -> find_hot_pixels -> mask_pixels (top 2) -> record(2.0) -> spectrum ->
-get_settings, and prints each call, its result and how long it took. Stops at the first {"ok": false}.
+Default (in memory, no separate process): lists the tools, then calls camera_info -> find_hot_pixels ->
+mask_pixels (top 2) -> record(2.0) -> spectrum -> get_settings, and prints each call, its result and how long it
+took. Stops at the first {"ok": false}.
 
-Run:  EVCAM_FAKE=1 EVCAM_FAKE_SCENE=pwm python scripts/mcp_smoke.py          (fake camera)
-      evcam; python scripts/mcp_smoke.py 2> >(grep -v InvalidVectBase >&2)   (real camera; the first call takes
-                                                                               ~9 s: open + settle)
+--stdio: the server runs as a subprocess, reached through agentic_ode.mcp_client (the way the agent will use it).
+1. ONE persistent session: mask_pixels, then get_settings -> the mask is still there.
+2. Contrast, a NEW session for each call: mask_pixels, then get_settings -> the mask is lost (new server process,
+   new camera object).
+
+Run:  EVCAM_FAKE=1 EVCAM_FAKE_SCENE=pwm python scripts/mcp_smoke.py [--stdio]  (fake camera)
+      evcam; python scripts/mcp_smoke.py 2> >(grep -v InvalidVectBase >&2)     (real camera; the first call takes
+                                                                                 ~9 s: open + settle)
 Recordings and the tool log go to runs/evcam/.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import logging
@@ -20,7 +27,10 @@ import time
 
 from fastmcp import Client
 
+from agentic_ode.mcp_client import evcam_session
 from agentic_ode.mcp_servers import evcam_server
+
+PIXELS = [[1053, 704], [926, 151]]  # the 2 known hot pixels (--stdio only needs some pixels to mask)
 
 
 class SmokeFailed(Exception):
@@ -83,7 +93,50 @@ async def main() -> int:
     return 0
 
 
+# ---- --stdio: through agentic_ode.mcp_client, sync like the graph ----
+
+def call_tool(tools: dict, name: str, args: dict, use_async: bool = False) -> dict:
+    """Call one LangChain tool (sync invoke, or async ainvoke from a new event loop) and print call, result, time."""
+    print(f"-> {name}({json.dumps(args)})  [{'ainvoke' if use_async else 'invoke'}]")
+    t0 = time.monotonic()
+    text = asyncio.run(tools[name].ainvoke(args)) if use_async else tools[name].invoke(args)
+    data = json.loads(text)
+    print("   " + json.dumps({k: v for k, v in data.items() if k != "bias_ranges"}))  # bias_ranges: long, not needed
+    print(f"<- {name}: {'ok' if data['ok'] else 'FAILED'} in {time.monotonic() - t0:.2f} s")
+    return data
+
+
+def stdio_main() -> int:
+    print(f"camera: {'FakeEventCamera' if os.environ.get('EVCAM_FAKE') == '1' else 'EventCamera (real hardware)'}")
+
+    print("\n== 1. ONE persistent session: mask_pixels, then get_settings")
+    t0 = time.monotonic()
+    with evcam_session() as session:
+        print(f"session open in {time.monotonic() - t0:.2f} s (server subprocess started)")
+        tools = {t.name: t for t in session.tools()}
+        print(f"{len(tools)} LangChain tools: {', '.join(tools)}")
+        call_tool(tools, "mask_pixels", {"pixels": PIXELS})
+        kept = call_tool(tools, "get_settings", {}, use_async=True)["mask"]
+    print(f"session closed (server subprocess stopped); {time.monotonic() - t0:.2f} s in total")
+
+    print("\n== 2. contrast: a NEW session for each call")
+    with evcam_session() as session:
+        call_tool({t.name: t for t in session.tools()}, "mask_pixels", {"pixels": PIXELS})
+    with evcam_session() as session:
+        lost = call_tool({t.name: t for t in session.tools()}, "get_settings", {})["mask"]
+
+    ok_kept, ok_lost = kept == PIXELS, lost == []
+    print(f"\none session:          mask after get_settings = {kept} -> {'KEPT' if ok_kept else 'NOT KEPT (bug)'}")
+    print(f"new session per call: mask after get_settings = {lost} -> {'LOST, as expected' if ok_lost else '??'}")
+    print(f"smoke test --stdio {'passed' if ok_kept and ok_lost else 'FAILED'}")
+    return 0 if ok_kept and ok_lost else 1
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Smoke test of the evcam MCP server.")
+    parser.add_argument("--stdio", action="store_true",
+                        help="server as a subprocess through agentic_ode.mcp_client: persistent vs new sessions")
+    args = parser.parse_args()
     # the camera's log lines (settle check, recordings) go to stderr; the results go to stdout
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(message)s")
-    sys.exit(asyncio.run(main()))
+    sys.exit(stdio_main() if args.stdio else asyncio.run(main()))
