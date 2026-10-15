@@ -148,6 +148,7 @@ def hardware(s: Settings) -> str:
 1280 x 720 pixels, no lens) through its tools. Make exactly ONE tool call that does the orchestrator's
 instruction; do not answer in text.
 - Use recording_ids and pixel coordinates only from earlier results in the dialogue; never invent them.
+- A tool without parameters is called with an empty argument object {}.
 - Setting changes (set_bias, mask_pixels, clear_mask, set_roi, clear_roi) are shown to the human for approval first.
 - The result of your call goes back to the orchestrator, who decides the next step."""
 
