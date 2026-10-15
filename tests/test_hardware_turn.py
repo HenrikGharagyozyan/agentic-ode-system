@@ -14,6 +14,7 @@ from langgraph.types import Command
 
 from agentic_ode import runner
 from agentic_ode.agents import Decision, Executor, prompts
+from agentic_ode.agents.hardware import schema_errors, schema_of
 from agentic_ode.cli import _auto_ask
 from agentic_ode.graph import build_graph
 from agentic_ode.mcp_client import McpSession
@@ -263,6 +264,40 @@ def test_the_same_failed_call_is_not_run_again(session, tmp_path, settings):
                            "with: ValueError: duration must be between 0.05 and 5.0 s")
     assert note.endswith("; change the call or choose another step.")
     assert state["stop_reason"] == "finish"
+
+
+def test_bad_arguments_never_reach_the_approval_question(session, tmp_path, settings):
+    # UC1, decision 2 (run 20261015-171638): pixels as {"x", "y"} objects were APPROVED, then refused by the server
+    bad = {"pixels": [{"x": 926, "y": 151}, {"x": 1053, "y": 704}]}
+    llm = HwLLM([hw("mask"), hw("mask")], [[("mask_pixels", bad)], [("mask_pixels", {"pixels": HOT})]])
+    graph = graph_with_camera(llm, session, tmp_path, settings)
+    graph.invoke(initial_state("t"), CONFIG)
+
+    # the graph pauses only for the second, valid call; the bad one became a note
+    assert "[[1053, 704], [926, 151]]" in paused(graph)["question"]
+    state = graph.get_state(CONFIG).values
+    assert roles(state) == ["user", "orchestrator", "system", "orchestrator"]
+    (note,) = notes(state)
+    assert note.startswith('The camera call mask_pixels({"pixels": [{"x": 926, "y": 151}, {"x": 1053, "y": 704}]}) '
+                           "did NOT run: its arguments do not match the tool's schema: pixels/0: ")
+    assert "is not of type 'array'" in note and note.endswith("Fix the arguments and try again.")
+    assert state["camera"] == [] and state["refused_calls"] == []
+
+
+def test_bad_arguments_of_a_measurement_are_not_sent(session, tmp_path, settings):
+    llm = HwLLM([hw("record"), "finish"], [[("record", {"seconds": "two"})]])
+    state = graph_with_camera(llm, session, tmp_path, settings).invoke(initial_state("t"), CONFIG)
+    assert any("seconds: 'two' is not of type 'number'" in n for n in notes(state))
+    assert state["camera"] == []  # no camera call was made
+
+
+def test_schema_errors_on_the_real_schemas(session):
+    schemas = {t.name: schema_of(t) for t in session.tools()}
+    assert schema_errors(schemas["mask_pixels"], {"pixels": [[926, 151]]}) == []
+    assert schema_errors(schemas["set_bias"], {"name": "bias_fo", "value": 20.0}) == []  # 20.0 is an integer value
+    assert schema_errors(schemas["set_bias"], {"name": "bias_fo"}) == ["arguments: 'value' is a required property"]
+    assert schema_errors(schemas["set_bias"], {"name": "bias_fo", "value": "20"}) == [
+        "value: '20' is not of type 'integer'"]  # stricter than the server, which would accept "20"
 
 
 class RetryLLM:
