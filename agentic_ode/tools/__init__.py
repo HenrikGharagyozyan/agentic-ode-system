@@ -6,9 +6,9 @@ from pathlib import Path
 
 from langchain_core.tools import StructuredTool
 
+from agentic_ode.core.metrics import TEST_RMSE_RE, TRAIN_RMSE_RE, last_rmse_line, parse_rmse, rmse_lines
 from agentic_ode.tools.focus import RESULT_KEY as FOCUS_RESULT_KEY
 from agentic_ode.tools.focus import format_focus, run_focus_search
-from agentic_ode.tools.metrics import TEST_RMSE_RE, TRAIN_RMSE_RE, last_rmse_line, parse_rmse, rmse_lines
 from agentic_ode.tools.workspace import RunResult, format_run, run_file, write_file
 
 WRITE_FILE = "write_file"
