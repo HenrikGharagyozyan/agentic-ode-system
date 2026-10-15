@@ -47,12 +47,17 @@ class _TurnLog:
 
 
 class Executor:
-    def __init__(self, llm, settings: Settings, workdir: Path):
+    def __init__(self, llm, settings: Settings, workdir: Path, camera_tools: list | None = None):
         self.settings = settings
         self.workdir = workdir
         self.prompt = prompts.executor(settings)
         self.tools = make_executor_tools(workdir, settings.run_timeout_s)
         self.llm = with_retry(llm.bind_tools(self.tools), settings.provider_retries)
+        # The event camera's MCP tools (HW3), in a SEPARATE binding of the same model: only the hardware turn
+        # uses it. The normal tool loop above never sees them, so no camera call can bypass the approval step.
+        self.camera_tools = list(camera_tools or [])
+        self.camera_llm = (with_retry(llm.bind_tools(self.camera_tools), settings.provider_retries)
+                           if self.camera_tools else None)
 
     def __call__(self, state: DialogueState) -> dict:
         messages = specialist_messages(self.prompt, state, Role.EXECUTOR)
