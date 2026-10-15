@@ -5,7 +5,7 @@ import inspect
 import numpy as np
 import pytest
 
-from agentic_ode.hardware.evcam import fake
+from agentic_ode.hardware.evcam import fake, limits
 from agentic_ode.hardware.evcam.analysis import hot_pixels, spectrum
 from agentic_ode.hardware.evcam.connector import EVENT_DTYPE, EventCamera
 from agentic_ode.hardware.evcam.fake import FakeEventCamera
@@ -61,6 +61,17 @@ def test_record_format_and_size():
     assert ev.dtype == EVENT_DTYPE
     assert ev["t"].min() >= 0 and ev["t"].max() < 1_000_000 and np.all(np.diff(ev["t"]) >= 0)
     assert 60_000 < ev.size < 80_000  # 2 x 30,000 hot + ~2,000 noise + ~9,600 blink
+
+
+def test_last_record_tells_what_happened(monkeypatch):
+    cam = FakeEventCamera("pwm").open()
+    assert cam.last_record is None
+    cam.record(1.0)
+    assert cam.last_record["recorded_s"] == 1.0 and cam.last_record["stopped_early"] is False
+    monkeypatch.setattr(limits, "MAX_EVENTS", 5_000)
+    ev = cam.record(1.0)
+    assert cam.last_record["stopped_early"] is True
+    assert cam.last_record["recorded_s"] == (int(ev["t"].max()) + 1) / 1e6 < 1.0
 
 
 def test_same_seed_same_events():
