@@ -339,6 +339,10 @@ def test_unknown_tool_name_gives_a_note(session, tmp_path, settings):
 def test_camera_paragraphs_only_in_camera_runs(settings):
     assert prompts.CAMERA_ORCHESTRATOR in prompts.orchestrator(settings, camera=True)
     assert "next = hardware" in prompts.CAMERA_ORCHESTRATOR
+    assert ("After a setting change, record again before analysing; a recording reflects the settings at the time "
+            "it was made.") in prompts.CAMERA_ORCHESTRATOR
+    assert ("Read every warning in a hardware result and act on it before finishing. Report the fundamental "
+            "frequency\n  (fundamental_hz), not the strongest peak.") in prompts.CAMERA_ORCHESTRATOR
     assert "hardware" not in prompts.orchestrator(settings)  # HW1/HW2 runs: unchanged
     assert prompts.CAMERA_SCIENTIST in prompts.scientist(settings, camera=True)
     assert "event camera" not in prompts.scientist(settings)  # (the HW2 bench has its own simulated camera)
