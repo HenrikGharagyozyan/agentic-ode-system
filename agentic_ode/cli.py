@@ -54,7 +54,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("auto-approve is ON: hard-decision questions are answered 'yes' automatically.\n", flush=True)
     try:
         ask = _auto_ask if args.auto_approve else _ask
-        outcome = run_task(args.task, Settings.from_env(), on_turn=_print_turn, ask=ask)
+        outcome = run_task(args.task, Settings.from_env(), on_turn=_print_turn, ask=ask, camera=args.camera)
     except ConfigurationError as e:
         print(f"configuration error: {e}", file=sys.stderr)
         return 2
@@ -79,6 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("task", nargs="?", type=Path, default=DEFAULT_TASK, help="task file (default: task5.md)")
     run.add_argument("--auto-approve", action="store_true",
                      help='answer "yes" to hard-decision questions automatically (they are still printed)')
+    run.add_argument("--camera", action="store_true",
+                     help="start the event camera MCP server and give its tools to the executor "
+                          "(EVCAM_FAKE=1: fake camera)")
     run.set_defaults(func=cmd_run)
 
     rep = sub.add_parser("report", help="build the PDF report from a run's transcript.json")
