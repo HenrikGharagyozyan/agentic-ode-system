@@ -167,7 +167,7 @@ def clear_roi() -> dict:
 
 @mcp.tool
 def record(seconds: float = 1.0, note: str = "") -> dict:
-    """Record 0.05..5 s of events, save them, and return recording_id plus a summary (rate, ON fraction, active pixels, busiest pixels); never the raw events."""  # noqa: E501
+    """Record 0.05..5 s of events, save them, and return recording_id plus a summary (rate, ON fraction, active pixels, busiest pixels); never the raw events. Adds a "warning" if pixels above 20 kHz are still active."""  # noqa: E501
     def action():
         cam = _camera()
         events = cam.record(seconds)  # checks 0.05..5 s itself
@@ -180,7 +180,14 @@ def record(seconds: float = 1.0, note: str = "") -> dict:
             "state": cam.state,  # biases, mask and ROI at the time of the recording
         }
         recording_id = store.save(events, meta, root=RECORDINGS_DIR)
-        return {"recording_id": recording_id, "summary": analysis.summary(events, seconds)}
+        result = {"recording_id": recording_id, "summary": analysis.summary(events, seconds)}
+        # safety net: a pixel above 20 kHz is a defect, not light (find_hot_pixels once missed one, 2026-10-15)
+        hot = analysis.hot_pixels(events, seconds)
+        if hot:
+            pixels = [[h["x"], h["y"]] for h in hot]
+            result["warning"] = (f"{len(hot)} pixel(s) above 20 kHz still active (defects, not light): {pixels}; "
+                                 "mask them with mask_pixels and record again")
+        return result
     return _run("record", {"seconds": seconds, "note": note}, action)
 
 
