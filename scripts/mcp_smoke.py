@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -83,4 +84,6 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    # the camera's log lines (settle check, recordings) go to stderr; the results go to stdout
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(message)s")
     sys.exit(asyncio.run(main()))
