@@ -19,8 +19,9 @@ def route(state: DialogueState) -> str:
     return state["route"]
 
 
-def build_graph(llm, workdir: Path, settings: Settings | None = None):
+def build_graph(llm, workdir: Path, settings: Settings | None = None, camera_tools: list | None = None):
     """Compile the five-node graph. `workdir` is where the executor writes and runs scripts.
+    `camera_tools` (the event camera's MCP tools) go to the executor only, never to another role.
 
     The graph has an in-memory checkpointer, so every invoke/stream needs a thread_id in its config.
     """
@@ -29,7 +30,7 @@ def build_graph(llm, workdir: Path, settings: Settings | None = None):
     g.add_node(Role.ORCHESTRATOR.value, Orchestrator(llm, settings))
     g.add_node(Role.SCIENTIST.value, make_scientist(llm, settings))
     g.add_node(Role.GENERAL.value, make_general(llm, settings))
-    g.add_node(Role.EXECUTOR.value, Executor(llm, settings, workdir))
+    g.add_node(Role.EXECUTOR.value, Executor(llm, settings, workdir, camera_tools))
     g.add_node(Role.HUMAN.value, human)
 
     g.set_entry_point(Role.ORCHESTRATOR.value)
