@@ -1,0 +1,53 @@
+%% Sequence of run 20261015-172112: UC4 "flickering or steady?" on the REAL camera, 5 orchestrator decisions.
+%% Every orchestrator decision and every hw_decide is one model call (not drawn).
+sequenceDiagram
+    autonumber
+    actor P as person (CLI)
+    participant O as orchestrator
+    participant D as hw_decide<br/>(executor model)
+    participant A as hw_approve
+    participant W as hw_call
+    participant S as MCP server evcam<br/>(stdio)
+    participant C as event camera<br/>(IMX636)
+
+    P->>O: task uc4_control.md
+
+    Note over O: decision 1: hardware, "record 2 s"
+    O->>D: instruction
+    D->>W: record({"seconds": 2}) (measurement: no approval)
+    W->>S: tools/call record
+    S->>C: open + 8 s settle (first use), stream 2 s
+    C-->>S: 17,871,023 events, only 17 active pixels
+    S-->>W: ok + warning "2 pixel(s) above 20 kHz still active: [[926, 151], [1053, 704]]"
+    W-->>O: hardware turn (call + result verbatim)
+
+    Note over O: decision 2: hardware, mask the 2 pixels
+    O->>D: instruction
+    D->>A: mask_pixels({"pixels": [[926, 151], [1053, 704]]})
+    A->>P: interrupt: approve this camera call?
+    P-->>A: yes
+    A->>W: approved
+    W->>S: tools/call mask_pixels
+    S->>C: digital event mask, 2 slots
+    S-->>W: ok, slots_used 2
+    W-->>O: hardware turn
+
+    Note over O: decision 3: hardware, "record 2 s"
+    O->>D: instruction
+    D->>W: record({"seconds": 2})
+    W->>S: tools/call record
+    S->>C: stream 2 s
+    C-->>S: 64 events (37 active pixels)
+    S-->>W: ok, 3.2e-05 Mev/s, no warning
+    W-->>O: hardware turn
+
+    Note over O: decision 4: hardware, spectrum of 20261015-172255-a1ffa4
+    O->>D: instruction
+    D->>W: spectrum({"recording_id": "20261015-172255-a1ffa4"})
+    W->>S: tools/call spectrum (reads the saved file, not the camera)
+    S-->>W: no peak above the noise: dominant_hz and fundamental_hz null, recorded_with 2 masked pixels
+    W-->>O: hardware turn
+
+    Note over O: decision 5: human, kind hard, proposed_next finish
+    O->>P: human stop: "Shall I finish and report this measurement?" (the light is steady)
+    P-->>O: yes → END (stop reason: finish)
