@@ -3,8 +3,8 @@
 from langgraph.types import Command
 
 from agentic_ode.agents import Decision, finish_allowed
+from agentic_ode.core.state import initial_state
 from agentic_ode.graph import build_graph
-from agentic_ode.state import initial_state
 from tests.conftest import FakeLLM
 
 

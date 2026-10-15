@@ -134,7 +134,7 @@ class HardwareCall:
         if tool is None:
             return _back([_note(f"{call['name']} is not a camera tool. No camera call was made.")])
         try:
-            result = tool.invoke(call["args"])  # the tool's result dict as JSON text (agentic_ode.mcp_client)
+            result = tool.invoke(call["args"])  # the tool's result dict as JSON text (agentic_ode.mcp.client)
             ok = bool(json.loads(result).get("ok"))
         except Exception as e:  # e.g. the server stopped or the call timed out: report it, never crash the run
             result, ok = json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}), False

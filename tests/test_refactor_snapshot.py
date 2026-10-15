@@ -15,11 +15,11 @@ from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 
 from agentic_ode.agents import prompts
-from agentic_ode.config import PROJECT_ROOT, Settings
+from agentic_ode.core.config import PROJECT_ROOT, Settings
 from agentic_ode.graph import build_graph
-from agentic_ode.hardware.evcam import fake
-from agentic_ode.mcp_client import McpSession, evcam_session
-from agentic_ode.mcp_servers import evcam_server
+from agentic_ode.hardware.devices.evcam import fake
+from agentic_ode.mcp import evcam_server
+from agentic_ode.mcp.client import McpSession, evcam_session
 from tests.conftest import FakeLLM
 
 SNAPSHOTS = Path(__file__).parent / "snapshots"

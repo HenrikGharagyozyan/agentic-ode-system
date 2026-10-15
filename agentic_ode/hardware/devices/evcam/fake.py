@@ -49,7 +49,7 @@ def _make_events(x, y, p, t) -> np.ndarray:
 
 
 class FakeEventCamera:
-    """Same public methods, checks and error messages as EventCamera (connector.py), with made-up events.
+    """Same public methods, checks and error messages as EventCamera (driver.py), with made-up events.
 
     Choose the scene when you create it. `seed` makes the events reproducible. Like the real camera, the fake
     device forgets all settings when it is reopened; self.state remembers them for reapply().

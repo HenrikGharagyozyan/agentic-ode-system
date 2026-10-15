@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 from fastmcp import Client
 
-from agentic_ode.hardware.evcam import fake, limits, store
-from agentic_ode.hardware.evcam.connector import EVENT_DTYPE
-from agentic_ode.hardware.evcam.fake import FakeEventCamera
-from agentic_ode.mcp_servers import evcam_server
+from agentic_ode.hardware.devices.evcam import fake, limits, store
+from agentic_ode.hardware.devices.evcam.events import EVENT_DTYPE
+from agentic_ode.hardware.devices.evcam.fake import FakeEventCamera
+from agentic_ode.mcp import evcam_server
 
 TOOLS = {"camera_info", "get_settings", "set_bias", "find_hot_pixels", "mask_pixels", "clear_mask", "set_roi",
          "clear_roi", "record", "spectrum"}

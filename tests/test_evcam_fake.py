@@ -5,10 +5,11 @@ import inspect
 import numpy as np
 import pytest
 
-from agentic_ode.hardware.evcam import fake, limits
-from agentic_ode.hardware.evcam.analysis import hot_pixels, spectrum
-from agentic_ode.hardware.evcam.connector import EVENT_DTYPE, EventCamera
-from agentic_ode.hardware.evcam.fake import FakeEventCamera
+from agentic_ode.hardware.devices.evcam import fake, limits
+from agentic_ode.hardware.devices.evcam.analysis import hot_pixels, spectrum
+from agentic_ode.hardware.devices.evcam.driver import EventCamera
+from agentic_ode.hardware.devices.evcam.events import EVENT_DTYPE
+from agentic_ode.hardware.devices.evcam.fake import FakeEventCamera
 
 
 def public_methods(cls):

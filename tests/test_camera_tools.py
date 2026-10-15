@@ -10,10 +10,10 @@ import pytest
 from langchain_core.tools import StructuredTool
 
 from agentic_ode.agents import Executor
+from agentic_ode.core.state import initial_state
 from agentic_ode.graph import build_graph
-from agentic_ode.mcp_client import evcam_session
-from agentic_ode.runner import run_task
-from agentic_ode.state import initial_state
+from agentic_ode.mcp.client import evcam_session
+from agentic_ode.runtime.runner import run_task
 from tests.conftest import FakeLLM
 
 CODING_TOOLS = ["write_file", "run_file", "run_focus_search"]

@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from agentic_ode.config import PROJECT_ROOT
-from agentic_ode.hardware.evcam import store
-from agentic_ode.hardware.evcam.connector import EVENT_DTYPE
+from agentic_ode.core.config import PROJECT_ROOT
+from agentic_ode.hardware.devices.evcam import store
+from agentic_ode.hardware.devices.evcam.events import EVENT_DTYPE
 
 
 def some_events():

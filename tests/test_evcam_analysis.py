@@ -5,8 +5,8 @@ import math
 import numpy as np
 import pytest
 
-from agentic_ode.hardware.evcam.analysis import fundamental, hot_pixels, spectrum, summary
-from agentic_ode.hardware.evcam.connector import EVENT_DTYPE
+from agentic_ode.hardware.devices.evcam.analysis import fundamental, hot_pixels, spectrum, summary
+from agentic_ode.hardware.devices.evcam.events import EVENT_DTYPE
 
 
 def make_events(x, y, p, t):

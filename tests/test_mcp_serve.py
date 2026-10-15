@@ -5,9 +5,9 @@ import os
 import sys
 
 import agentic_ode.hardware.devices  # noqa: F401 - registers the known instruments
-from agentic_ode.config import PROJECT_ROOT
+from agentic_ode.core.config import PROJECT_ROOT
 from agentic_ode.hardware.standard import registry
-from agentic_ode.mcp_client import McpSession, evcam_session
+from agentic_ode.mcp.client import McpSession, evcam_session
 
 
 def tool_view(session) -> list:

@@ -5,8 +5,8 @@ import math
 import numpy as np
 import pytest
 
-from agentic_ode.hardware.evcam import limits
-from agentic_ode.hardware.evcam.limits import validate_bias, validate_duration, validate_pixel, validate_roi
+from agentic_ode.hardware.devices.evcam import limits
+from agentic_ode.hardware.devices.evcam.limits import validate_bias, validate_duration, validate_pixel, validate_roi
 
 
 def test_constants():

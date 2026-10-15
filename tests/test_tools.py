@@ -2,7 +2,8 @@ import time
 
 import pytest
 
-from agentic_ode.tools import last_rmse_line, parse_rmse, run_file, write_file
+from agentic_ode.core.metrics import last_rmse_line, parse_rmse
+from agentic_ode.tools import run_file, write_file
 
 
 def test_run_file_timeout(tmp_path):

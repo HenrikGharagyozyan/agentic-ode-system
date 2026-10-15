@@ -8,8 +8,8 @@ import threading
 import pytest
 from langchain_core.tools import StructuredTool
 
-from agentic_ode.config import PROJECT_ROOT
-from agentic_ode.mcp_client import McpSession, evcam_session
+from agentic_ode.core.config import PROJECT_ROOT
+from agentic_ode.mcp.client import McpSession, evcam_session
 
 
 def counter_session() -> McpSession:
