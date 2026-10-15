@@ -11,8 +11,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from fastmcp.tools import Tool
-
 from agentic_ode.hardware.standard.result import Result
 
 KINDS = ("read", "setting", "measurement")
@@ -39,6 +37,8 @@ class ActionSpec:
     def input_schema(self) -> dict:
         """The JSON schema of the arguments, made from the handler's type hints by fastmcp's own generator,
         so it is the same schema the MCP server shows."""
+        from fastmcp.tools import Tool  # imported here: importing a device driver should not load the MCP library
+
         return Tool.from_function(self.handler, name=self.name).parameters
 
 
