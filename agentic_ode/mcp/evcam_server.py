@@ -25,9 +25,10 @@ from datetime import datetime
 
 from fastmcp import FastMCP
 
-from agentic_ode.hardware.devices.evcam import analysis, store
+from agentic_ode.hardware.devices.evcam import store
 from agentic_ode.hardware.devices.evcam.driver import EventCamera
 from agentic_ode.hardware.devices.evcam.fake import FakeEventCamera
+from agentic_ode.hardware.devices.evcam.instrument import EvcamInstrument
 
 RECORDINGS_DIR = store.DEFAULT_ROOT  # runs/evcam/ (git-ignored); the tests point this to a temporary folder
 LOG_FILE = RECORDINGS_DIR / "tool_log.jsonl"
@@ -65,15 +66,30 @@ def _log(tool: str, args: dict, result: dict, seconds: float) -> None:
         f.write(json.dumps(record, default=str) + "\n")  # default=str: never fail on an unusual value
 
 
-def _run(tool: str, args: dict, action) -> dict:
-    """Run action() under the lock and return {"ok": True, **its result}, or {"ok": False, "error": ...}.
-    Every call is logged."""
+class _ModuleCamera(EvcamInstrument):
+    """Step 13 only: the open camera and the recordings folder still live in this module, where the tests patch
+    them. Step 14 removes this class: then the instrument keeps both itself."""
+
+    def __init__(self):  # no state of its own
+        pass
+
+    def camera(self):
+        return _camera()
+
+    @property
+    def recordings_dir(self):
+        return RECORDINGS_DIR
+
+
+instrument = _ModuleCamera()
+
+
+def _run(tool: str, args: dict) -> dict:
+    """Run the instrument's action under the lock and return its wire dict, {"ok": True, ...} or
+    {"ok": False, "error": ...} (Instrument.call() never raises). Every call is logged."""
     t0 = time.monotonic()
-    try:
-        with _lock:
-            result = {"ok": True, **action()}
-    except Exception as e:  # every error goes back to the model as text; the server keeps running
-        result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    with _lock:
+        result = instrument.call(tool, args).to_wire()
     _log(tool, args, result, time.monotonic() - t0)
     return result
 
@@ -86,139 +102,71 @@ async def _lifespan(server):
         _close_camera()  # release the camera so another process can open it
 
 
-mcp = FastMCP("evcam", instructions="Tools for an IDS event camera (Sony IMX636, 1280 x 720 pixels, no lens): "
-              "set biases, mask pixels, set a region of interest, record events and analyse light flicker.",
-              lifespan=_lifespan)
+mcp = FastMCP("evcam", instructions=instrument.describe()["instructions"], lifespan=_lifespan)
 
 
-# ---- tools ----
+# ---- tools: each one runs the instrument action of the same name (devices/evcam/instrument.py) ----
 
 @mcp.tool
 def camera_info() -> dict:
     """Camera identity: serial, sensor, width x height, temperature, current biases, and whether it is the fake camera."""  # noqa: E501
-    def action():
-        cam = _camera()
-        return {**cam.info(), "fake": isinstance(cam, FakeEventCamera)}
-    return _run("camera_info", {}, action)
+    return _run("camera_info", {})
 
 
 @mcp.tool
 def get_settings() -> dict:
     """Current settings (biases, masked pixels, ROI) and the allowed range of each bias."""
-    def action():
-        cam = _camera()
-        return {"biases": cam.get_biases(), "mask": cam.state["mask"], "roi": cam.state["roi"],
-                "bias_ranges": cam.bias_ranges()}
-    return _run("get_settings", {}, action)
+    return _run("get_settings", {})
 
 
 @mcp.tool
 def set_bias(name: str, value: int) -> dict:
     """Set one bias (bias_diff, bias_diff_on, bias_diff_off, bias_fo, bias_hpf, bias_refr) and return the value read back; higher bias_diff_on/off = less noise, less sensitive."""  # noqa: E501
-    return _run("set_bias", {"name": name, "value": value},
-                lambda: {"name": name, "value": _camera().set_bias(name, value)})
+    return _run("set_bias", {"name": name, "value": value})
 
 
 @mcp.tool
 def find_hot_pixels(seconds: float = 0.5, top: int = 64, min_rate_hz: float = 20000) -> dict:
     """Make a short recording (not saved) and list pixels firing at least min_rate_hz, busiest first; it does not mask them."""  # noqa: E501
-    def action():
-        events = _camera().record(seconds)
-        return {"seconds": seconds, "hot_pixels": analysis.hot_pixels(events, seconds, top, min_rate_hz)}
-    return _run("find_hot_pixels", {"seconds": seconds, "top": top, "min_rate_hz": min_rate_hz}, action)
+    return _run("find_hot_pixels", {"seconds": seconds, "top": top, "min_rate_hz": min_rate_hz})
 
 
 @mcp.tool
 def mask_pixels(pixels: list[tuple[int, int]]) -> dict:
     """Silence the given (x, y) pixels (at most 64 in total); returns the newly masked pixels and the slots used."""
-    def action():
-        cam = _camera()
-        new = cam.mask_pixels(pixels)
-        return {"newly_masked": new, "slots_used": len(cam.state["mask"]), "slots_total": 64}
-    return _run("mask_pixels", {"pixels": pixels}, action)
+    return _run("mask_pixels", {"pixels": pixels})
 
 
 @mcp.tool
 def clear_mask() -> dict:
     """Unmask all masked pixels."""
-    def action():
-        _camera().clear_mask()
-        return {"mask": []}
-    return _run("clear_mask", {}, action)
+    return _run("clear_mask", {})
 
 
 @mcp.tool
 def set_roi(x: int, y: int, width: int, height: int) -> dict:
     """Only pixels inside this window (sensor 1280 x 720) send events; one window at most."""
-    def action():
-        _camera().set_roi(x, y, width, height)
-        return {"roi": [x, y, width, height]}
-    return _run("set_roi", {"x": x, "y": y, "width": width, "height": height}, action)
+    return _run("set_roi", {"x": x, "y": y, "width": width, "height": height})
 
 
 @mcp.tool
 def clear_roi() -> dict:
     """Remove the ROI: the whole sensor sends events again."""
-    def action():
-        _camera().clear_roi()
-        return {"roi": None}
-    return _run("clear_roi", {}, action)
+    return _run("clear_roi", {})
 
 
 @mcp.tool
 def record(seconds: float = 1.0, note: str = "") -> dict:
     """Record 0.05..5 s of events, save them, and return recording_id plus a summary (rate, ON fraction, active pixels, busiest pixels); never the raw events. Adds a "warning" if it stopped early (too many events; the summary then covers the real, shorter time) or if pixels above 20 kHz are still active."""  # noqa: E501
-    def action():
-        cam = _camera()
-        events = cam.record(seconds)  # checks 0.05..5 s itself; stops early at limits.MAX_EVENTS events
-        # what the camera really did; ONE rule for an early stop: less camera time than asked
-        recorded_s, wall_s = cam.last_record["recorded_s"], cam.last_record["wall_s"]
-        stopped_early = recorded_s < seconds
-        meta = {
-            "created": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "note": note,
-            "seconds": seconds,  # asked for
-            "recorded_s": recorded_s,  # really covered (less than seconds if stopped early)
-            "fake": isinstance(cam, FakeEventCamera),
-            "camera": cam.info(),
-            "state": cam.state,  # biases, mask and ROI at the time of the recording
-            # the settings this recording was made with; spectrum returns them as "recorded_with"
-            "settings": {"masked_pixels": len(cam.state["mask"]), "biases": cam.get_biases(),
-                         "roi": cam.state["roi"]},
-        }
-        recording_id = store.save(events, meta, root=RECORDINGS_DIR)
-        result = {"recording_id": recording_id, "summary": analysis.summary(events, recorded_s)}
-        warnings = []
-        if events.size == 0 and wall_s < 0.5 * seconds:  # a real recording takes at least its camera time
-            warnings.append(f"0 events in {wall_s:.2f} s of wall time for {seconds:g} s of camera time: the camera "
-                            "stream delivered no new data; record again")
-        if stopped_early:  # the summary above already uses the real duration
-            warnings.append(f"stopped after {recorded_s:.2f} s at {events.size} events "
-                            f"({events.size / recorded_s / 1e6:.1f} Mev/s): too much light or activity; set an ROI, "
-                            "reduce the light or raise the biases, then record again")
-        # safety net: a pixel above 20 kHz is a defect, not light (find_hot_pixels once missed one, 2026-10-15)
-        hot = analysis.hot_pixels(events, recorded_s)
-        if hot:
-            pixels = [[h["x"], h["y"]] for h in hot]
-            warnings.append(f"{len(hot)} pixel(s) above 20 kHz still active (defects, not light): {pixels}; "
-                            "mask them with mask_pixels and record again")
-        if warnings:
-            result["warning"] = " | ".join(warnings)
-        return result
-    return _run("record", {"seconds": seconds, "note": note}, action)
+    return _run("record", {"seconds": seconds, "note": note})
 
 
 @mcp.tool
 def spectrum(recording_id: str, bin_us: int = 100, fmin_hz: float = 20, fmax_hz: float = 2000,
              min_snr: float = 8) -> dict:
     """Flicker spectrum of a saved recording: report fundamental_hz as the flicker frequency (dominant_hz is only the strongest peak, which can be a harmonic; both null if no peak stands out of the noise); top peaks and harmonics of the fundamental, each with snr; "recorded_with" gives the settings the recording was made with; a "warning" if the recording is shorter than 1 s."""  # noqa: E501
-    def action():  # reads the saved file only: does not open the camera
-        events, meta = store.load(recording_id, root=RECORDINGS_DIR)
-        return {"recording_id": recording_id,
-                "recorded_with": meta.get("settings"),  # None for recordings saved before 2026-10-15 16:00
-                **analysis.spectrum(events, bin_us=bin_us, fmax_hz=fmax_hz, fmin_hz=fmin_hz, min_snr=min_snr)}
-    return _run("spectrum", {"recording_id": recording_id, "bin_us": bin_us, "fmin_hz": fmin_hz,
-                             "fmax_hz": fmax_hz, "min_snr": min_snr}, action)
+    return _run("spectrum", {"recording_id": recording_id, "bin_us": bin_us, "fmin_hz": fmin_hz, "fmax_hz": fmax_hz,
+                             "min_snr": min_snr})
 
 
 def main() -> None:
