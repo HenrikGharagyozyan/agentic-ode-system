@@ -25,9 +25,9 @@ from datetime import datetime
 
 from fastmcp import FastMCP
 
-from agentic_ode.hardware.evcam import analysis, store
-from agentic_ode.hardware.evcam.connector import EventCamera
-from agentic_ode.hardware.evcam.fake import FakeEventCamera
+from agentic_ode.hardware.devices.evcam import analysis, store
+from agentic_ode.hardware.devices.evcam.driver import EventCamera
+from agentic_ode.hardware.devices.evcam.fake import FakeEventCamera
 
 RECORDINGS_DIR = store.DEFAULT_ROOT  # runs/evcam/ (git-ignored); the tests point this to a temporary folder
 LOG_FILE = RECORDINGS_DIR / "tool_log.jsonl"
