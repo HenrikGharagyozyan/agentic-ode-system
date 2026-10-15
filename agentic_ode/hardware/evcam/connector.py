@@ -7,6 +7,7 @@ without the camera. Facts about the device: docs/hw3-hardware.md.
 from __future__ import annotations
 
 import logging
+import time
 
 import numpy as np
 
@@ -14,7 +15,7 @@ from agentic_ode.hardware.evcam import limits
 
 log = logging.getLogger(__name__)
 
-DELTA_T_US = 10_000  # length of one EventsIterator slice in us (10 ms)
+EVENT_DTYPE = np.dtype({"names": ["x", "y", "p", "t"], "formats": ["<u2", "<u2", "<i2", "<i8"]})  # = CD decoder output
 # on-chip filters that change the event stream; open() turns all of them off so measurements are raw
 FILTERS = {
     "antiflicker": "get_i_antiflicker_module",
@@ -35,8 +36,8 @@ class EventCamera:
         self.state: dict = {"biases": {}, "mask": [], "roi": None}
         self._dev = None
         self._hal = None  # the metavision_hal module, set by open()
-        self._events_iterator = None  # metavision_core's EventsIterator class, set by open()
-        self._t_end = 0  # stream time (us) where the last recording stopped
+        self._cb_id = None  # id of our one CD event callback: added in open(), removed in close()
+        self._chunks: list[np.ndarray] = []  # event batches the callback receives; only record() empties it
 
     # ---- open / close ----
 
@@ -45,15 +46,16 @@ class EventCamera:
         if self._dev is not None:
             return self
         import metavision_hal  # imported here: the SDK only exists where the `evcam` environment is set
-        from metavision_core.event_io import EventsIterator
 
         dev = metavision_hal.DeviceDiscovery.open("")
         if dev is None:
             raise RuntimeError("no event camera found (run `evcam` first; close metavision_viewer)")
-        self._hal, self._events_iterator, self._dev = metavision_hal, EventsIterator, dev
-        self._t_end = 0  # a new device starts its stream time at 0
+        self._hal, self._dev = metavision_hal, dev
         try:
             self._disable_filters()
+            # ONE callback for the whole session. EventsIterator added a new one for every recording and never
+            # removed it, so recording N had every event N times. Each batch arrives as its own numpy array.
+            self._cb_id = dev.get_i_event_cd_decoder().add_event_buffer_callback(self._chunks.append)
         except Exception:
             self.close()
             raise
@@ -76,6 +78,10 @@ class EventCamera:
         """Release the camera so another process can open it. self.state is kept for reapply()."""
         if self._dev is None:
             return
+        if self._cb_id is not None:
+            self._dev.get_i_event_cd_decoder().remove_callback(self._cb_id)
+            self._cb_id = None
+        self._chunks.clear()
         self._dev = None  # dropping the last reference closes the device
         log.info("camera closed")
 
@@ -172,7 +178,9 @@ class EventCamera:
         x, y, w, h = limits.validate_roi(x, y, w, h)
         roi = self._require_open().get_i_roi()
         roi.set_mode(self._hal.I_ROI.Mode.ROI)
-        if not roi.set_window(self._hal.I_ROI.Window(x, y, w, h)):  # verified order: x, y, width, height
+        # the camera's window includes its end column and row (Window(0, 0, 640, 360) gave 641 x 361 pixels,
+        # measured 2026-10-14), so we send w-1, h-1 to get exactly w x h; order: x, y, width, height
+        if not roi.set_window(self._hal.I_ROI.Window(x, y, w - 1, h - 1)):
             raise RuntimeError(f"camera refused ROI window x={x}, y={y}, w={w}, h={h}")
         roi.enable(True)
         self.state["roi"] = (x, y, w, h)
@@ -193,36 +201,37 @@ class EventCamera:
         """
         seconds = limits.validate_duration(seconds)
         dev = self._require_open()
-        n_skip = round(limits.WARMUP_S * 1e6 / DELTA_T_US)  # warm-up slices (50 for 0.5 s)
-        n_keep = round(seconds * 1e6 / DELTA_T_US)
-        it = self._events_iterator.from_device(device=dev, delta_t=DELTA_T_US)
-        chunks, total, n_real, t0 = [], 0, 0, None
-        for evs in it:
-            slice_end = it.get_current_time()
-            # the iterator's clock starts at 0, but stream time continues from the last recording:
-            # slices up to there arrive at once and are always empty
-            if slice_end <= self._t_end:
-                continue
-            n_real += 1
-            if n_real <= n_skip:
-                continue
-            if t0 is None:
-                t0 = slice_end - DELTA_T_US  # start of the first kept slice
-            chunks.append(evs.copy())  # copy: the reader may reuse its buffer
-            total += evs.size
-            if total > limits.MAX_EVENTS:
-                log.warning("more than %d events: recording stopped after %.2f s",
-                            limits.MAX_EVENTS, (n_real - n_skip) * DELTA_T_US / 1e6)
-                break
-            if n_real >= n_skip + n_keep:
-                break
-        self._t_end = it.get_current_time()
-        if t0 is None:
-            raise RuntimeError("the event stream ended during the warm-up")
-        events = np.concatenate(chunks)[: limits.MAX_EVENTS]
-        events["t"] -= t0
-        duration = (n_real - n_skip) * DELTA_T_US / 1e6
-        log.info("recorded %.2f s: %d events (%.3f Mev/s)", duration, events.size, events.size / duration / 1e6)
+        stream, decoder = dev.get_i_events_stream(), dev.get_i_events_stream_decoder()
+        self._chunks.clear()  # clear, never replace: the callback holds this exact list
+        t_warm_end = t_end = None
+        w0 = time.monotonic()
+        stream.start()
+        try:
+            while t_end is None or decoder.get_last_timestamp() < t_end:
+                if stream.wait_next_buffer() < 0:
+                    raise RuntimeError("the event stream ended before the recording was complete")
+                decoder.decode(stream.get_latest_raw_data())  # the callback appends the decoded batches
+                now = decoder.get_last_timestamp()
+                if t_warm_end is None:
+                    # first buffer after start(): measure from here, because when Python is slower than the
+                    # camera, stop() drops unread data and the stream time jumps ahead
+                    t_warm_end = now + round(limits.WARMUP_S * 1e6)
+                    t_end = t_warm_end + round(seconds * 1e6)
+                if now < t_warm_end:
+                    self._chunks.clear()  # still in the warm-up: drop these events now to save memory
+                    continue
+                if sum(c.size for c in self._chunks) > limits.MAX_EVENTS:
+                    log.warning("more than %d events: recording stopped early", limits.MAX_EVENTS)
+                    break
+        finally:
+            stream.stop()  # this also drops data we have not read yet
+        covered = (min(decoder.get_last_timestamp(), t_end) - t_warm_end) / 1e6
+        events = np.concatenate(self._chunks) if self._chunks else np.empty(0, dtype=EVENT_DTYPE)
+        self._chunks.clear()
+        events = events[(events["t"] >= t_warm_end) & (events["t"] < t_end)][: limits.MAX_EVENTS]
+        events["t"] -= t_warm_end
+        log.info("recorded %.2f s of camera time in %.2f s wall: %d events (%.3f Mev/s)",
+                 covered, time.monotonic() - w0, events.size, events.size / covered / 1e6)
         return events
 
     # ---- state ----
