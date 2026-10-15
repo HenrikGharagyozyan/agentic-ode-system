@@ -46,6 +46,14 @@ class _TurnLog:
     written: list[str] = field(default_factory=list)
 
 
+def closed_schema(tool):
+    """The tool with "additionalProperties": false in its JSON schema, so the model is told that no other arguments
+    exist. Tools with a pydantic schema are returned unchanged."""
+    if isinstance(tool.args_schema, dict):
+        return tool.model_copy(update={"args_schema": {**tool.args_schema, "additionalProperties": False}})
+    return tool
+
+
 class Executor:
     def __init__(self, llm, settings: Settings, workdir: Path, camera_tools: list | None = None):
         self.settings = settings
@@ -56,20 +64,29 @@ class Executor:
         # The event camera's MCP tools (HW3), in a SEPARATE binding of the same model: only the hardware turn
         # uses it. The normal tool loop above never sees them, so no camera call can bypass the approval step.
         # tool_choice="any" forces the model to make a tool call (see camera_reply() for models that reject it).
+        # _camera_forced has NO retries, camera_llm is the same binding WITH retries.
         self._raw_llm = llm
-        self.camera_tools = list(camera_tools or [])
-        self.camera_llm = (with_retry(llm.bind_tools(self.camera_tools, tool_choice="any"), settings.provider_retries)
+        self.camera_tools = [closed_schema(t) for t in camera_tools or []]
+        self._camera_forced = llm.bind_tools(self.camera_tools, tool_choice="any") if self.camera_tools else None
+        self.camera_llm = (with_retry(self._camera_forced, settings.provider_retries)
                            if self.camera_tools else None)
 
     def camera_reply(self, messages: list):
-        """One model call with the camera tools (the hardware turn). If the provider rejects tool_choice, retry ONCE
-        without it and keep that binding for the rest of the run; a text answer is then handled by the caller."""
-        try:
+        """One model call with the camera tools (the hardware turn), forced to make a tool call.
+
+        The first try has no retries, so a provider that rejects tool_choice is seen at once (not after ~15 s of
+        useless retries). Then: retry ONCE without tool_choice and keep that binding for the rest of the run.
+        Any other error gets the normal retries. A text answer is handled by the caller (hw_decide)."""
+        if self._camera_forced is None:  # tool_choice was rejected earlier in this run
             return self.camera_llm.invoke(messages)
+        try:
+            return self._camera_forced.invoke(messages)
         except Exception as e:
             if "tool_choice" not in str(e).lower():
-                raise
+                log.info("camera model call failed (%s); retrying", e)
+                return self.camera_llm.invoke(messages)
             log.warning("the provider rejected tool_choice (%s); retrying once without it", e)
+            self._camera_forced = None
             self.camera_llm = with_retry(self._raw_llm.bind_tools(self.camera_tools), self.settings.provider_retries)
             return self.camera_llm.invoke(messages)
 
