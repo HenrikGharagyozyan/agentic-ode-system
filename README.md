@@ -1,6 +1,10 @@
 # agentic-ode-system
 
-A four-role LangGraph system (orchestrator, scientist, general agent, executor) that is given Task 5, the neural-ODE fit of the Silverbox oscillator, and tries to solve it. The system spec is in [task6.md](task6.md), and the problem the system receives is in [task5.md](task5.md).
+A LangGraph system with four model roles (orchestrator, scientist, general agent, executor), a human pause and a
+hardware turn. It was first given Task 5, the neural-ODE fit of the Silverbox oscillator (spec in
+[task6.md](task6.md), problem in [task5.md](task5.md)). Later it also ran focusing experiments on a simulated optical
+bench (HW2), and it drives an IDS event camera through an MCP server (HW3). The full map of the code is in
+[docs/architecture.md](docs/architecture.md).
 
 ## Graph
 
@@ -10,17 +14,31 @@ graph TD
     orchestrator -.->|next = scientist| scientist
     orchestrator -.->|next = general| general
     orchestrator -.->|next = executor| executor
-    orchestrator -.->|finish, guard passed / 8 decisions| END([END])
+    orchestrator -.->|next = human| human
+    orchestrator -.->|next = hardware| hw_decide
+    orchestrator -.->|finish, guard passed / decision limit| END([END])
     scientist --> orchestrator
     general --> orchestrator
     executor --> orchestrator
+    human -.->|yes| executor
+    human -.->|refused / ambiguous| orchestrator
+    human -.->|yes to finish| END
+    hw_decide -.->|setting change| hw_approve
+    hw_decide -.->|measurement / read| hw_call
+    hw_decide -.->|no call| orchestrator
+    hw_approve -.->|yes| hw_call
+    hw_approve -.->|refused| orchestrator
+    hw_call --> orchestrator
 ```
 
-- **State** ([agentic_ode/state.py](agentic_ode/state.py)): the dialogue is a list of turns `{"role", "content"}`, appended with `Annotated[list, operator.add]`. The state also holds a counter of orchestrator decisions, plus the records of real script runs (exit code, stdout, the parsed RMSE) that the finish guard checks.
-- **Orchestrator** ([agents/orchestrator.py](agentic_ode/agents/orchestrator.py)): one model call per turn, with structured output `Decision(next, instruction, reason)`. The decision is appended to the dialogue as its turn. It has no tools and follows no keyword table or fixed order. The routing prompt sends plan and ODE questions to the scientist, tracebacks to the executor, and conceptual side questions to the general agent.
-- **Finish guard** (`finish_allowed`): `finish` is accepted only when an executor turn contains a `FREE_RUN_TEST_RMSE:` line from the stdout of a run that exited with code 0. Otherwise the model is asked again, with a note that finish is not yet allowed (up to 3 times). The run stops on finish, or after 8 decisions.
-- **Scientist** and **general agent** ([agents/specialists.py](agentic_ode/agents/specialists.py)): no tools. The scientist writes the ODE, the network, the state equation, the training, the free-run test and numbered steps. The general agent answers side questions only.
-- **Executor** ([agents/executor.py](agentic_ode/agents/executor.py), [tools/](agentic_ode/tools/)): the only node bound to tools. `write_file` writes a new file into `runs/<timestamp>/` and never overwrites one. `run_file` runs the file with a 300 s timeout. The executor runs an internal tool loop (at most 2 script runs per turn), then appends one turn with the real tool output verbatim.
+- **State** ([core/state.py](agentic_ode/core/state.py), [core/records.py](agentic_ode/core/records.py)): the dialogue is a list of turns `{"role", "content"}`, appended with `Annotated[list, operator.add]`. The state also holds a counter of orchestrator decisions and the records of real tool calls (script runs, focusing experiments, camera calls) that the finish guard checks.
+- **Orchestrator** ([agents/orchestrator.py](agentic_ode/agents/orchestrator.py)): one model call per turn, with structured output `Decision(next, instruction, reason, ...)`. The decision is appended to the dialogue as its turn. It has no tools.
+- **Finish guard** ([agents/guards.py](agentic_ode/agents/guards.py), `finish_allowed`): `finish` is accepted only when real evidence is in the dialogue: an executor turn with a `FREE_RUN_TEST_RMSE:` line from a run that exited with code 0, a `FOCUS_ENHANCEMENT` line from a real focusing call, or a hardware turn with a successful camera measurement. Otherwise the model is asked again (up to 3 times). The run stops on finish or at the decision limit (8, or 20 for camera runs).
+- **Scientist** and **general agent** ([agents/specialists.py](agentic_ode/agents/specialists.py)): no tools. The scientist writes the plan; the general agent answers side questions only.
+- **Executor** ([agents/executor.py](agentic_ode/agents/executor.py), [tools/](agentic_ode/tools/)): the only role bound to tools. `write_file` writes a new file into `runs/<timestamp>/` and never overwrites one. `run_file` runs it with a 300 s timeout. `run_focus_search` runs one focusing experiment on the simulated bench.
+- **Human** ([graph/nodes/human_turn.py](agentic_ode/graph/nodes/human_turn.py)): the graph pauses with `interrupt()`. One "yes" approves exactly one hard step.
+- **Hardware turn** ([graph/nodes/hardware_turn.py](agentic_ode/graph/nodes/hardware_turn.py)): the executor's model picks ONE camera tool call; a setting change waits for the human's approval; the call runs through the MCP session and its result goes verbatim into the dialogue.
+- **Event camera** ([hardware/devices/evcam/](agentic_ode/hardware/devices/evcam/), [mcp/](agentic_ode/mcp/)): `EvcamInstrument` exposes 10 actions; the generic server factory turns it into an MCP server. See "Model Hardware Standard" in [docs/architecture.md](docs/architecture.md) for how to add another instrument.
 
 ## Install
 
@@ -38,16 +56,28 @@ MODEL=nvidia/nemotron-3-super-120b-a12b:free
 # optional: AGENTIC_ODE_DATA_FILE=..., AGENTIC_ODE_RUNS_DIR=..., OPENROUTER_BASE_URL=...
 ```
 
-All limits (8 decisions, 300 s per script, tool rounds, output clipping, retries) live in one place: `Settings` in [agentic_ode/config.py](agentic_ode/config.py).
+All limits (decisions, 300 s per script, tool rounds, output clipping, retries) live in one place: `Settings` in [agentic_ode/core/config.py](agentic_ode/core/config.py).
+
+The real event camera needs the Metavision SDK and the shell alias `evcam` (see [docs/hw3-hardware.md](docs/hw3-hardware.md)). Without a camera, set `EVCAM_FAKE=1` to use the fake camera.
 
 ## Run
 
 ```bash
 agentic-ode run                          # sends task5.md to the orchestrator, prints "[role] text" per turn
 agentic-ode -v run other_task.md         # any task file; -v logs decisions, -vv also tool calls
+agentic-ode run tasks/uc2_flicker.md --camera            # with the event camera (MCP server as a subprocess)
+EVCAM_FAKE=1 agentic-ode run tasks/uc2_flicker.md --camera --auto-approve   # fake camera, approvals answered "yes"
 agentic-ode report runs/<timestamp>      # report/solution.pdf from transcript.json (needs Chrome/Chromium)
 python main.py                           # same as `agentic-ode run`
 python -m agentic_ode run                # same, without the console script
+```
+
+The camera MCP server on its own (stdio):
+
+```bash
+EVCAM_FAKE=1 python -m agentic_ode.mcp_servers.evcam_server    # the evcam server (EVCAM_FAKE_SCENE=dark|pwm|steady)
+EVCAM_FAKE=1 python -m agentic_ode.mcp.serve evcam             # the same tools, through the generic entry point
+python scripts/mcp_smoke.py --stdio                            # call the tools through our MCP client
 ```
 
 From Python:
@@ -60,13 +90,13 @@ outcome = run_task(Path("task5.md"), Settings.from_env(), on_turn=print)
 print(outcome.run_dir, outcome.state["stop_reason"])
 ```
 
-Each run writes `runs/<timestamp>/` with the executor's scripts, `transcript.json` (the dialogue plus run records) and `transcript.md`. Only the run used in the report is committed.
+Each run writes `runs/<timestamp>/` with the executor's scripts, `transcript.json` (the dialogue plus run records) and `transcript.md`. Camera recordings and the tool log go to `runs/evcam/`. Only the run used in the report is committed.
 
 ## Development
 
 ```bash
-.venv/bin/pytest -q          # offline, with a scripted fake model: tools, finish guard, 8-decision limit,
-                             # tool ownership, runner transcripts, report numbers taken verbatim
+.venv/bin/pytest -q          # offline, with a scripted fake model and the fake camera; includes snapshot tests
+                             # (tests/snapshots/) that pin the MCP tools, the graph, the prompts and tool results
 .venv/bin/ruff check .
 ```
 
@@ -74,28 +104,21 @@ Each run writes `runs/<timestamp>/` with the executor's scripts, `transcript.jso
 
 ```
 agentic_ode/
-  config.py            Settings: model access, paths, all limits (loaded from env / .env)
-  llm.py               chat model factory, retries, message helpers
-  state.py             Role, Turn, RunRecord, DialogueState (dialogue + decision counter + run records)
-  graph.py             StateGraph wiring
-  runner.py            run_task(): run directory, streaming, transcript after every step
-  transcript.py        transcript.json / transcript.md
-  cli.py, __main__.py  `agentic-ode run | report`
-  agents/
-    prompts.py         system prompts of the four roles
-    context.py         what a specialist sees: dialogue + orchestrator instruction
-    orchestrator.py    Decision, finish guard, Orchestrator node
-    specialists.py     scientist and general agent (no tools)
-    executor.py        executor node: internal tool loop, one verbatim turn
-  tools/
-    workspace.py       write_file / run_file (sandboxed names, timeout)
-    metrics.py         FREE_RUN_*_RMSE output contract
-    __init__.py        LangChain tool wrappers bound to the executor
-  reporting/
-    builder.py         report HTML + PDF from transcript.json
-    diagram.py         graph drawing and Mermaid source
-tests/                 offline tests (conftest.py holds the fake model)
-runs/<timestamp>/      the committed validation run
-report/                solution.pdf, solution.html, graph.mmd
-main.py                thin entry point (= agentic-ode run)
+  core/            settings, state and records, dialogue text, RMSE contract, chat model
+  agents/          the four model roles, their prompts and the guards
+  tools/           the executor's in-process tools (write_file, run_file, run_focus_search)
+  graph/           the StateGraph: builder, routing, nodes/human_turn.py, nodes/hardware_turn.py
+  hardware/
+    standard/      Model Hardware Standard: Instrument, ActionSpec, Result, registry
+    devices/       evcam/ (driver, fake, limits, analysis, store, instrument), optical_bench/ (simulator)
+  mcp/             MCP client, generic server factory, serve.py, evcam_server.py
+  mcp_servers/     evcam_server.py: the documented server command (alias of mcp/evcam_server.py)
+  runtime/         cli (agentic-ode run | report), runner, run_store (transcripts)
+  reporting/       report HTML + PDF, graph drawing
+tests/             offline tests (conftest.py holds the fake model; snapshots/ the pinned behaviour)
+scripts/           camera capture and analysis, HW3 figures, MCP smoke test
+docs/              architecture.md (this layout), refactor-plan.md, hardware notes
+runs/<timestamp>/  the committed validation run
+report/            solution.pdf, solution.html, graph.mmd
+main.py            thin entry point (= agentic-ode run)
 ```
