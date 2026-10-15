@@ -1,0 +1,57 @@
+%% Architecture of the whole system after HW3 (HW1 roles, HW2 human stop + simulated bench, HW3 hardware turn).
+flowchart TB
+    user(["person at the CLI<br/>agentic-ode run TASK --camera"])
+    llm[("LLM via OpenRouter<br/>nvidia/nemotron-3-super-120b-a12b:free")]
+    bench["simulated optical bench (HW2)<br/>laser → DMD → scattering medium → camera"]
+    cam[("IDS UE-39B0XCP-E-GL event camera<br/>Sony IMX636, 1280×720, USB3")]
+
+    subgraph main["agent process"]
+        runner["runner.py<br/>graph.stream() · interrupt → ask the person → Command(resume)"]
+        subgraph graph["LangGraph StateGraph · state = dialogue + run / experiment / camera records"]
+            orch["orchestrator (HW1)<br/>Decision: next, instruction, reason,<br/>kind, question, proposed_next"]
+            sci["scientist (HW1)<br/>theory and plans, no tools"]
+            gen["general (HW1)<br/>side questions, no tools"]
+            exe["executor (HW1/HW2)<br/>write_file · run_file · run_focus_search"]
+            human["human stop (HW2)<br/>interrupt()"]
+            hwd["hw_decide (HW3)<br/>executor's camera model:<br/>exactly ONE camera tool call"]
+            hwa["hw_approve (HW3)<br/>interrupt(), only for setting changes"]
+            hwc["hw_call (HW3)<br/>runs the call, writes the result<br/>verbatim + CameraRecord"]
+        end
+        client["MCP client · mcp_client.py<br/>ONE persistent session per run<br/>(background thread + event loop)"]
+    end
+
+    subgraph server["MCP server process · evcam_server.py · FastMCP over stdio"]
+        tools["10 tools: camera_info · get_settings · set_bias · find_hot_pixels · mask_pixels<br/>clear_mask · set_roi · clear_roi · record · spectrum"]
+        conn["connector: EventCamera<br/>OpenEB 5.2 metavision_hal + IDS HAL plugin<br/>(FakeEventCamera if EVCAM_FAKE=1)"]
+        ana["analysis.py · store.py<br/>runs/evcam/*.npz · tool_log.jsonl"]
+    end
+
+    user --> runner --> orch
+    orch -- "scientist" --> sci
+    orch -- "general" --> gen
+    orch -- "human (ambiguous / hard step)" --> human
+    orch -- "hardware" --> hwd
+    orch -- "finish" --> done(["END"])
+    sci --> orch
+    gen --> orch
+    exe --> orch
+    human -- "yes: run the executor" --> exe
+    human -- "yes: finish" --> done
+    human -- "no / an answer" --> orch
+    hwd -- "setting change" --> hwa
+    hwd -- "measurement or reading" --> hwc
+    hwd -- "note: no call / refused before / failed before" --> orch
+    hwa -- "yes" --> hwc
+    hwa -- "refused: note" --> orch
+    hwc --> orch
+
+    orch -. "model call" .-> llm
+    sci -. "model call" .-> llm
+    gen -. "model call" .-> llm
+    exe -. "model call (tool loop)" .-> llm
+    hwd -. "model call (tool_choice)" .-> llm
+    exe -. "run_focus_search" .-> bench
+    hwc -- "tool call" --> client
+    client <-- "MCP over stdio" --> tools
+    tools --> conn --> cam
+    tools --> ana
