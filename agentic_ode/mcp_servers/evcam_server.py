@@ -167,26 +167,43 @@ def clear_roi() -> dict:
 
 @mcp.tool
 def record(seconds: float = 1.0, note: str = "") -> dict:
-    """Record 0.05..5 s of events, save them, and return recording_id plus a summary (rate, ON fraction, active pixels, busiest pixels); never the raw events. Adds a "warning" if pixels above 20 kHz are still active."""  # noqa: E501
+    """Record 0.05..5 s of events, save them, and return recording_id plus a summary (rate, ON fraction, active pixels, busiest pixels); never the raw events. Adds a "warning" if it stopped early (too many events; the summary then covers the real, shorter time) or if pixels above 20 kHz are still active."""  # noqa: E501
     def action():
         cam = _camera()
-        events = cam.record(seconds)  # checks 0.05..5 s itself
+        events = cam.record(seconds)  # checks 0.05..5 s itself; stops early at limits.MAX_EVENTS events
+        # what the camera really did; ONE rule for an early stop: less camera time than asked
+        recorded_s, wall_s = cam.last_record["recorded_s"], cam.last_record["wall_s"]
+        stopped_early = recorded_s < seconds
         meta = {
             "created": datetime.now().astimezone().isoformat(timespec="seconds"),
             "note": note,
-            "seconds": seconds,
+            "seconds": seconds,  # asked for
+            "recorded_s": recorded_s,  # really covered (less than seconds if stopped early)
             "fake": isinstance(cam, FakeEventCamera),
             "camera": cam.info(),
             "state": cam.state,  # biases, mask and ROI at the time of the recording
+            # the settings this recording was made with; spectrum returns them as "recorded_with"
+            "settings": {"masked_pixels": len(cam.state["mask"]), "biases": cam.get_biases(),
+                         "roi": cam.state["roi"]},
         }
         recording_id = store.save(events, meta, root=RECORDINGS_DIR)
-        result = {"recording_id": recording_id, "summary": analysis.summary(events, seconds)}
+        result = {"recording_id": recording_id, "summary": analysis.summary(events, recorded_s)}
+        warnings = []
+        if events.size == 0 and wall_s < 0.5 * seconds:  # a real recording takes at least its camera time
+            warnings.append(f"0 events in {wall_s:.2f} s of wall time for {seconds:g} s of camera time: the camera "
+                            "stream delivered no new data; record again")
+        if stopped_early:  # the summary above already uses the real duration
+            warnings.append(f"stopped after {recorded_s:.2f} s at {events.size} events "
+                            f"({events.size / recorded_s / 1e6:.1f} Mev/s): too much light or activity; set an ROI, "
+                            "reduce the light or raise the biases, then record again")
         # safety net: a pixel above 20 kHz is a defect, not light (find_hot_pixels once missed one, 2026-10-15)
-        hot = analysis.hot_pixels(events, seconds)
+        hot = analysis.hot_pixels(events, recorded_s)
         if hot:
             pixels = [[h["x"], h["y"]] for h in hot]
-            result["warning"] = (f"{len(hot)} pixel(s) above 20 kHz still active (defects, not light): {pixels}; "
-                                 "mask them with mask_pixels and record again")
+            warnings.append(f"{len(hot)} pixel(s) above 20 kHz still active (defects, not light): {pixels}; "
+                            "mask them with mask_pixels and record again")
+        if warnings:
+            result["warning"] = " | ".join(warnings)
         return result
     return _run("record", {"seconds": seconds, "note": note}, action)
 
@@ -194,10 +211,11 @@ def record(seconds: float = 1.0, note: str = "") -> dict:
 @mcp.tool
 def spectrum(recording_id: str, bin_us: int = 100, fmin_hz: float = 20, fmax_hz: float = 2000,
              min_snr: float = 8) -> dict:
-    """Flicker spectrum of a saved recording: dominant frequency (null if no peak stands out of the noise), top peaks and harmonics, each with snr."""  # noqa: E501
+    """Flicker spectrum of a saved recording: report fundamental_hz as the flicker frequency (dominant_hz is only the strongest peak, which can be a harmonic; both null if no peak stands out of the noise); top peaks and harmonics of the fundamental, each with snr; "recorded_with" gives the settings the recording was made with; a "warning" if the recording is shorter than 1 s."""  # noqa: E501
     def action():  # reads the saved file only: does not open the camera
-        events, _ = store.load(recording_id, root=RECORDINGS_DIR)
+        events, meta = store.load(recording_id, root=RECORDINGS_DIR)
         return {"recording_id": recording_id,
+                "recorded_with": meta.get("settings"),  # None for recordings saved before 2026-10-15 16:00
                 **analysis.spectrum(events, bin_us=bin_us, fmax_hz=fmax_hz, fmin_hz=fmin_hz, min_snr=min_snr)}
     return _run("spectrum", {"recording_id": recording_id, "bin_us": bin_us, "fmin_hz": fmin_hz,
                              "fmax_hz": fmax_hz, "min_snr": min_snr}, action)
