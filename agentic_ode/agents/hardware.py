@@ -31,6 +31,18 @@ def call_text(call: dict) -> str:
     return f"{call['name']}({json.dumps(call['args'])})"
 
 
+def same_call(a: dict, b: dict) -> bool:
+    """Same tool and same arguments (the order of the arguments does not matter)."""
+    return a["name"] == b["name"] and json.dumps(a["args"], sort_keys=True) == json.dumps(b["args"], sort_keys=True)
+
+
+def error_of(result_line: str) -> str:
+    try:
+        return str(json.loads(result_line).get("error", result_line))
+    except (ValueError, AttributeError):
+        return result_line
+
+
 def _note(text: str) -> dict:
     """A turn written by the graph itself, not by a person or a model."""
     return {"role": Role.SYSTEM.value, "content": text}
@@ -48,6 +60,7 @@ class HardwareDecide:
     def __init__(self, executor: Executor, settings: Settings):
         self.executor = executor
         self.prompt = prompts.hardware(settings)
+        self.params = {t.name: set(t.args) for t in executor.camera_tools}  # the arguments each tool accepts
 
     def __call__(self, state: DialogueState) -> dict:
         if self.executor.camera_llm is None:
@@ -59,15 +72,24 @@ class HardwareDecide:
             text = text_of(reply).strip()
             return _back([_note("The hardware turn made no camera call" + (f"; the model answered: {text}" if text
                                                                              else "."))])
-        call = {"name": calls[0]["name"], "args": calls[0]["args"]}
+        name, raw_args = calls[0]["name"], calls[0]["args"]
+        known = self.params.get(name)  # None for an unknown tool: hw_call reports it
+        args = {k: v for k, v in raw_args.items() if known is None or k in known}
+        # ignored: arguments the tool does not have (e.g. camera_info({"serial": ...})); hw_call names them
+        call = {"name": name, "args": args, "ignored": sorted(set(raw_args) - set(args))}
         notes = []
         if len(calls) > 1:
             dropped = ", ".join(call_text({"name": c["name"], "args": c["args"]}) for c in calls[1:])
             notes.append(_note(f"The hardware turn asked for {len(calls)} camera calls; only the first one runs. "
                                f"Dropped: {dropped}"))
-        if call in state["refused_calls"]:
+        if any(same_call(call, r) for r in state["refused_calls"]):
             return _back(notes + [_note(f"The human refused the camera call {call_text(call)} earlier. "
                                         "It did NOT run and is not asked again; choose something else.")])
+        failed = [r for r in state["camera"] if not r["ok"] and same_call(call, {"name": r["tool"], "args": r["args"]})]
+        if failed:  # repeat guard: the same call would fail the same way
+            return _back(notes + [_note(f"The camera call {call_text(call)} did NOT run: this exact call already "
+                                        f"failed with: {error_of(failed[-1]['result_line'])}; change the call or "
+                                        "choose another step.")])
         log.info("hardware turn chose %s", call_text(call))
         return {"dialogue": notes, "hw_call": call,
                 "route": HW_APPROVE if call["name"] in CAMERA_SETTING_TOOLS else HW_CALL}
@@ -85,7 +107,7 @@ def hw_approve(state: DialogueState) -> dict:
     if accepted(reply):
         return {"dialogue": [reply_turn], "route": HW_CALL}
     return _back([reply_turn, _note(f"The human refused the camera call {call_text(call)}. It did NOT run.")],
-                 refused_calls=[call])
+                 refused_calls=[{"name": call["name"], "args": call["args"]}])
 
 
 class HardwareCall:
@@ -106,8 +128,11 @@ class HardwareCall:
             result, ok = json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}), False
         log.info("camera call %s: ok=%s", call_text(call), ok)
         index = len(state["dialogue"])  # the hardware turn below gets this index
+        ignored = call.get("ignored", [])
+        ignored_line = f"ignored unknown argument(s): {', '.join(ignored)}\n" if ignored else ""
         return {
-            "dialogue": [{"role": Role.HARDWARE.value, "content": f"camera call: {call_text(call)}\nresult: {result}"}],
+            "dialogue": [{"role": Role.HARDWARE.value,
+                          "content": f"camera call: {call_text(call)}\n{ignored_line}result: {result}"}],
             "camera": [{"turn_index": index, "tool": call["name"], "args": call["args"], "ok": ok,
                         "result_line": result}],
             "route": Role.ORCHESTRATOR.value,
