@@ -71,6 +71,10 @@ Mev/s = million events per second.
 
 - Two hot pixels, (1053, 704) and (926, 151), give ~90% of all events (~9 Mev/s in the dark).
   With both masked: ~0.7 Mev/s.
+- Known limitation (seen once, 2026-10-15, MCP smoke test, phone screen on the sensor): the first recording after
+  open() put the events of both hot pixels on (926, 151) (8.67 MHz) and none on (1053, 704); cause not found
+  (not our analysis code, not stale mask slots, probe 10). Safety net: the MCP `record` tool warns about pixels
+  above 20 kHz.
 - Dark noise vs `bias_diff_off` (hot pixels masked):
 
   | bias_diff_off | 0    | 10   | 20   | 40    | 60    | 80     |
