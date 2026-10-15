@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from langgraph.types import interrupt
 
-from agentic_ode.agents.orchestrator import FINISH, finish_allowed
+from agentic_ode.agents.guards import FINISH, accepted, finish_allowed
 from agentic_ode.core.dialogue import decision_field
 from agentic_ode.core.state import END_ROUTE, DialogueState, Role
 
 STEPS_NEEDING_APPROVAL = (Role.EXECUTOR.value, FINISH)
-YES_WORDS = {"yes", "y"}
 
 
 def last_orchestrator_turn(state: DialogueState) -> str:
@@ -23,12 +22,6 @@ def question_of(content: str) -> str:
     """All text after `question:`. It is the last field of a human decision, so it may have several lines."""
     _, found, rest = content.partition("\nquestion:")
     return rest.strip() if found else ""
-
-
-def accepted(reply: str) -> bool:
-    """Accept only if the reply starts with yes / y. Anything else is a refuse, so the safe choice wins."""
-    words = reply.lower().split()
-    return bool(words) and words[0].strip(".,!:;") in YES_WORDS
 
 
 def human(state: DialogueState) -> dict:
