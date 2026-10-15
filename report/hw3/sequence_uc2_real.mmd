@@ -1,0 +1,80 @@
+%% Sequence of run 20261015-161317: UC2 "how fast does it flicker" on the REAL camera, 8 orchestrator decisions.
+%% Every orchestrator decision and every hw_decide is one model call (not drawn, to keep the diagram readable).
+sequenceDiagram
+    autonumber
+    actor P as person (CLI)
+    participant O as orchestrator
+    participant D as hw_decide<br/>(executor model)
+    participant A as hw_approve
+    participant W as hw_call
+    participant S as MCP server evcam<br/>(stdio)
+    participant C as event camera<br/>(IMX636)
+
+    P->>O: task uc2_flicker.md (phone screen, min brightness, 3–5 cm)
+
+    Note over O: decision 1: hardware, "record 2 s"
+    O->>D: instruction
+    D->>W: record({"seconds": 2}) (measurement: no approval)
+    W->>S: tools/call record
+    S->>C: open + 8 s settle (first use), stream
+    C-->>S: 30,000,000 events in 1.59 s (stopped early)
+    S-->>W: ok + warning "stopped after 1.59 s ... (18.8 Mev/s)"
+    W-->>O: hardware turn (call + result verbatim)
+
+    Note over O: decision 2: hardware, mask the 2 hot pixels
+    O->>D: instruction
+    D->>A: mask_pixels([[926, 151], [1053, 704]])
+    A->>P: interrupt: approve this camera call?
+    P-->>A: yes (Command(resume))
+    A->>W: approved
+    W->>S: tools/call mask_pixels
+    S->>C: digital event mask, 2 slots
+    S-->>W: ok, slots_used 2
+    W-->>O: hardware turn
+
+    Note over O: decision 3: hardware, "record 2 s"
+    O->>D: instruction
+    D->>W: record({"seconds": 2})
+    W->>S: tools/call record
+    S->>C: stream (an old buffer from the early stop is still waiting)
+    C-->>S: 0 events in 0.02 s
+    S-->>W: ok, 0 events, no warning (bug 1, fixed later)
+    W-->>O: hardware turn
+
+    Note over O: decision 4: hardware, "get_settings"
+    O->>D: instruction
+    D->>W: get_settings({})
+    W->>S: tools/call get_settings
+    S-->>W: mask = 2 pixels, all biases 0
+    W-->>O: hardware turn
+
+    Note over O: decision 5: hardware, set 6 biases
+    O->>D: instruction
+    D->>A: set_bias(bias_diff, 5) (3 calls asked: first kept, note to the dialogue)
+    A->>P: interrupt: approve this camera call?
+    P-->>A: yes
+    A->>W: approved
+    W->>S: tools/call set_bias
+    S->>C: bias_diff = 5
+    S-->>W: ok, read back 5
+    W-->>O: hardware turn
+
+    Note over O: decision 6: hardware, "record 2 s"
+    O->>D: instruction
+    D->>W: record({"seconds": 2})
+    W->>S: tools/call record
+    S->>C: stream
+    C-->>S: 29,954,613 events in 0.27 s (stopped early)
+    S-->>W: ok, summary says 2.0 s, no warning (bug 2, fixed later)
+    W-->>O: hardware turn
+
+    Note over O: decision 7: hardware, spectrum of 20261015-161656-8d1493
+    O->>D: instruction
+    D->>W: spectrum({"recording_id": "20261015-161656-8d1493"})
+    W->>S: tools/call spectrum (reads the saved file, not the camera)
+    S-->>W: fundamental 240.24 Hz, snr 273.6 + warning "only 0.27 s long"
+    W-->>O: hardware turn
+
+    Note over O: decision 8: human, kind hard, proposed_next finish
+    O->>P: human stop: "Shall I report the flicker frequency as 240.24 Hz and finish?"
+    P-->>O: yes → END (stop reason: finish)
