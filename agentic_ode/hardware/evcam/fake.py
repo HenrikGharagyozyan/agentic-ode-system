@@ -11,6 +11,7 @@ blinking light), so tests are fast.
 from __future__ import annotations
 
 import logging
+import time
 
 import numpy as np
 
@@ -63,6 +64,7 @@ class FakeEventCamera:
         self.state: dict = {"biases": {}, "mask": [], "roi": None}
         self._dev: dict | None = None  # the settings of the fake device while it is open; None = closed
         self._rng = np.random.default_rng(seed)
+        self.last_record: dict | None = None  # like EventCamera: recorded_s, wall_s, stopped_early
 
     # ---- open / close ----
 
@@ -178,15 +180,20 @@ class FakeEventCamera:
         """
         seconds = limits.validate_duration(seconds)
         dev = self._require_open()
+        w0 = time.monotonic()
         t_max = round(seconds * 1e6)
         parts = [self._noise(dev, t_max), self._hot_pixels(t_max)]
         if self.scene == "pwm":
             parts.append(self._pwm(t_max))
         events = np.concatenate(parts)
         events = events[self._visible(dev, events)]
+        stopped_early = events.size > limits.MAX_EVENTS
         events = np.sort(events, order="t")[: limits.MAX_EVENTS]
+        recorded_s = (int(events["t"].max()) + 1) / 1e6 if stopped_early else seconds
+        self.last_record = {"recorded_s": recorded_s, "wall_s": round(time.monotonic() - w0, 3),
+                            "stopped_early": stopped_early}
         log.info("recorded %.2f s of fake camera time: %d events (%.3f Mev/s)",
-                 seconds, events.size, events.size / seconds / 1e6)
+                 recorded_s, events.size, events.size / recorded_s / 1e6)
         return events
 
     def _noise(self, dev: dict, t_max: int) -> np.ndarray:
