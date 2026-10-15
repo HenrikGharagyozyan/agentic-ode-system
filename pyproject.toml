@@ -25,6 +25,8 @@ dependencies = [
     # HW3: the event camera MCP server, and its client for the agent (agentic_ode/mcp_client.py; not
     # langchain-mcp-adapters: no release works with mcp 2.x, which fastmcp 4 needs)
     "fastmcp>=4.1",
+    # HW3: hw_decide checks camera tool arguments against the tool's JSON schema before the approval question
+    "jsonschema>=4",
 ]
 
 [project.optional-dependencies]
