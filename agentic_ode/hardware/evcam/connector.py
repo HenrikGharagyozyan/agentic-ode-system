@@ -16,6 +16,12 @@ from agentic_ode.hardware.evcam import limits
 log = logging.getLogger(__name__)
 
 EVENT_DTYPE = np.dtype({"names": ["x", "y", "p", "t"], "formats": ["<u2", "<u2", "<i2", "<i8"]})  # = CD decoder output
+# Burn-in after open(): the first stream after opening has a start-up burst (dark: peak 1.7 Mev/s, still 0.06 Mev/s
+# after 20 s, almost only OFF events), but stop() + start() clears it at once (probe 07, 2026-10-15). A 0.5 s stream
+# is not enough (dark.npz, 2026-10-15); 8 s is the shortest burn-in verified so far (probe 06).
+SETTLE_S = 8.0
+SETTLE_CHECK_S = 0.5  # short decoded check stream after the settle: logs the noise level record() starts from
+MAX_PIXEL_RATE = 20_000  # ev/s; a real pixel cannot fire faster (dead time ~73 us), so faster pixels are defects
 # on-chip filters that change the event stream; open() turns all of them off so measurements are raw
 FILTERS = {
     "antiflicker": "get_i_antiflicker_module",
@@ -42,7 +48,8 @@ class EventCamera:
     # ---- open / close ----
 
     def open(self) -> EventCamera:
-        """Open the camera and turn off all on-chip filters. Calling open() on an open camera does nothing."""
+        """Open the camera, turn off all on-chip filters and burn in the start-up burst (takes about SETTLE_S s).
+        Calling open() on an open camera does nothing."""
         if self._dev is not None:
             return self
         import metavision_hal  # imported here: the SDK only exists where the `evcam` environment is set
@@ -56,6 +63,7 @@ class EventCamera:
             # ONE callback for the whole session. EventsIterator added a new one for every recording and never
             # removed it, so recording N had every event N times. Each batch arrives as its own numpy array.
             self._cb_id = dev.get_i_event_cd_decoder().add_event_buffer_callback(self._chunks.append)
+            self._settle()
         except Exception:
             self.close()
             raise
@@ -73,6 +81,44 @@ class EventCamera:
             log.info("filter %s: enabled=%s", name, enabled)
             if enabled:
                 raise RuntimeError(f"could not disable the {name} filter; measurements would not be raw")
+
+    def _settle(self) -> None:
+        """Stream SETTLE_S s without decoding; stop() then ends the start-up burst. A short decoded check stream
+        after that logs the noise level that record() starts from."""
+        stream, decoder = self._dev.get_i_events_stream(), self._dev.get_i_events_stream_decoder()
+        w0 = time.monotonic()
+        stream.start()
+        try:
+            # read and drop the raw data without decoding: cheap, so Python keeps up even with the hot pixels on
+            while time.monotonic() - w0 < SETTLE_S:
+                if stream.wait_next_buffer() < 0:
+                    raise RuntimeError("the event stream ended during the settle phase")
+                stream.get_latest_raw_data()
+        finally:
+            stream.stop()  # ends the start-up burst; also drops the data we have not read yet
+        settled = time.monotonic() - w0
+        # check stream: the same situation record() will see (a new start() after the burst-in)
+        self._chunks.clear()
+        t_check = None
+        stream.start()
+        try:
+            while t_check is None or decoder.get_last_timestamp() < t_check + SETTLE_CHECK_S * 1e6:
+                if stream.wait_next_buffer() < 0:
+                    raise RuntimeError("the event stream ended during the settle check")
+                decoder.decode(stream.get_latest_raw_data())
+                if t_check is None:
+                    t_check = decoder.get_last_timestamp()  # the check window starts after the first decoded buffer
+        finally:
+            stream.stop()
+        events = np.concatenate(self._chunks) if self._chunks else np.empty(0, dtype=EVENT_DTYPE)
+        self._chunks.clear()
+        events = events[(events["t"] >= t_check) & (events["t"] < t_check + SETTLE_CHECK_S * 1e6)]
+        counts = np.bincount(events["y"].astype(np.int64) * limits.SENSOR_W + events["x"],
+                             minlength=limits.SENSOR_W * limits.SENSOR_H)
+        defect = counts > MAX_PIXEL_RATE * SETTLE_CHECK_S
+        log.info("settled for %.1f s; noise after the restart (%.1f s): %.3f Mev/s in total, %.4f Mev/s without "
+                 "%d defect pixel(s)", settled, SETTLE_CHECK_S, events.size / SETTLE_CHECK_S / 1e6,
+                 counts[~defect].sum() / SETTLE_CHECK_S / 1e6, int(defect.sum()))
 
     def close(self) -> None:
         """Release the camera so another process can open it. self.state is kept for reapply()."""
