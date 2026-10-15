@@ -88,7 +88,7 @@ def test_hot_pixels_mask_record_spectrum(tmp_path):
                                 ("get_settings", {}))
     # each run() is a new server run, and the camera is reopened: the mask is set in the same run as record
     assert masked["ok"] and masked["slots_used"] == 2 and masked["slots_total"] == 64
-    assert rec["ok"] and store.ID_PATTERN.fullmatch(rec["recording_id"])
+    assert rec["ok"] and store.ID_PATTERN.fullmatch(rec["recording_id"]) and "warning" not in rec
     assert all((p["x"], p["y"]) not in fake.HOT_PIXELS for p in rec["summary"]["top_pixels"])
     assert settings["mask"] == pixels
     (spec,) = run(("spectrum", {"recording_id": rec["recording_id"]}))
@@ -98,11 +98,23 @@ def test_hot_pixels_mask_record_spectrum(tmp_path):
 
 def test_record_returns_no_raw_events(tmp_path):
     (rec,) = run(("record", {"seconds": 1.0}))
-    assert set(rec) == {"ok", "recording_id", "summary"}
+    assert set(rec) == {"ok", "recording_id", "summary", "warning"}  # warning: the hot pixels are not masked
     assert len(json.dumps(rec)) < 5_000  # a summary, not ~70,000 events
     events, meta = store.load(rec["recording_id"], root=tmp_path)  # the events are in the file
     assert events.size == rec["summary"]["n_events"] > 0
     assert meta["fake"] is True and meta["seconds"] == 1.0
+
+
+def test_record_warns_about_active_hot_pixels():
+    (rec,) = run(("record", {"seconds": 0.5}))
+    assert rec["ok"] and "2 pixel(s) above 20 kHz still active" in rec["warning"]
+    assert all(str([x, y]) in rec["warning"] for x, y in fake.HOT_PIXELS)
+    assert "mask_pixels" in rec["warning"]
+
+
+def test_record_no_warning_when_the_hot_pixels_are_masked():
+    _, rec = run(("mask_pixels", {"pixels": [list(p) for p in fake.HOT_PIXELS]}), ("record", {"seconds": 0.5}))
+    assert rec["ok"] and "warning" not in rec
 
 
 def test_steady_scene_has_no_peak(monkeypatch):
