@@ -27,8 +27,12 @@ from langchain_core.tools import StructuredTool
 class McpSession:
     """One MCP server started as a subprocess (stdio), with one session kept open until close()."""
 
-    def __init__(self, command: str, args: list[str], env: dict[str, str] | None = None, timeout_s: float = 120):
-        self.command, self.args, self.env, self.timeout_s = command, args, env, timeout_s
+    def __init__(self, command: str = "", args: list[str] | None = None, env: dict[str, str] | None = None,
+                 timeout_s: float = 120, transport=None):
+        """transport: instead of a subprocess, any fastmcp Client transport, e.g. a FastMCP server object
+        (in memory: the tests use this to avoid a subprocess and files on disk)."""
+        self.command, self.args, self.env, self.timeout_s = command, args or [], env, timeout_s
+        self.transport = transport
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None  # the background thread's event loop
         self._client: Client | None = None
@@ -57,7 +61,7 @@ class McpSession:
         self._loop = asyncio.get_running_loop()
         self._stop = asyncio.Event()
         try:
-            transport = StdioTransport(command=self.command, args=self.args, env=self.env)
+            transport = self.transport or StdioTransport(command=self.command, args=self.args, env=self.env)
             async with Client(transport, timeout=self.timeout_s) as client:
                 self._client = client
                 self._ready.set()
