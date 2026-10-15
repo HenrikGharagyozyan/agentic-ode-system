@@ -1,0 +1,227 @@
+[
+  {
+    "name": "camera_info",
+    "description": "Camera identity: serial, sensor, width x height, temperature, current biases, and whether it is the fake camera.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_settings",
+    "description": "Current settings (biases, masked pixels, ROI) and the allowed range of each bias.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_bias",
+    "description": "Set one bias (bias_diff, bias_diff_on, bias_diff_off, bias_fo, bias_hpf, bias_refr) and return the value read back; higher bias_diff_on/off = less noise, less sensitive.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ]
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "find_hot_pixels",
+    "description": "Make a short recording (not saved) and list pixels firing at least min_rate_hz, busiest first; it does not mask them.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seconds": {
+          "default": 0.5,
+          "type": "number"
+        },
+        "top": {
+          "default": 64,
+          "type": "integer"
+        },
+        "min_rate_hz": {
+          "default": 20000,
+          "type": "number"
+        }
+      }
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "mask_pixels",
+    "description": "Silence the given (x, y) pixels (at most 64 in total); returns the newly masked pixels and the slots used.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pixels": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "pixels"
+      ]
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "clear_mask",
+    "description": "Unmask all masked pixels.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "set_roi",
+    "description": "Only pixels inside this window (sensor 1280 x 720) send events; one window at most.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ]
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "clear_roi",
+    "description": "Remove the ROI: the whole sensor sends events again.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "record",
+    "description": "Record 0.05..5 s of events, save them, and return recording_id plus a summary (rate, ON fraction, active pixels, busiest pixels); never the raw events. Adds a \"warning\" if it stopped early (too many events; the summary then covers the real, shorter time) or if pixels above 20 kHz are still active.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seconds": {
+          "default": 1.0,
+          "type": "number"
+        },
+        "note": {
+          "default": "",
+          "type": "string"
+        }
+      }
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  },
+  {
+    "name": "spectrum",
+    "description": "Flicker spectrum of a saved recording: report fundamental_hz as the flicker frequency (dominant_hz is only the strongest peak, which can be a harmonic; both null if no peak stands out of the noise); top peaks and harmonics of the fundamental, each with snr; \"recorded_with\" gives the settings the recording was made with; a \"warning\" if the recording is shorter than 1 s.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recording_id": {
+          "type": "string"
+        },
+        "bin_us": {
+          "default": 100,
+          "type": "integer"
+        },
+        "fmin_hz": {
+          "default": 20,
+          "type": "number"
+        },
+        "fmax_hz": {
+          "default": 2000,
+          "type": "number"
+        },
+        "min_snr": {
+          "default": 8,
+          "type": "number"
+        }
+      },
+      "required": [
+        "recording_id"
+      ]
+    },
+    "outputSchema": {
+      "additionalProperties": true,
+      "type": "object"
+    }
+  }
+]
