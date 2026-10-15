@@ -12,7 +12,8 @@ from agentic_ode.hardware.evcam import limits
 
 PEAK_WINDOW_HZ = 5.0  # a spectrum peak must be the largest value within +-5 Hz; this drops the small side peaks
 N_PEAKS = 5  # spectrum() reports the 5 strongest peaks
-N_HARMONICS = 5  # spectrum() reports the harmonics 2f .. 5f of the dominant peak
+N_HARMONICS = 5  # spectrum() reports the harmonics 2f .. 5f of the fundamental
+MIN_GOOD_SECONDS = 1.0  # spectrum() warns about shorter recordings (resolution coarser than 1 Hz)
 
 
 def _check_seconds(seconds: float) -> float:
@@ -69,12 +70,26 @@ def hot_pixels(events: np.ndarray, seconds: float, top: int = 64, min_rate_hz: f
     return _pixel_list(counts, hot, seconds)
 
 
+def fundamental(peaks_hz: list[float], resolution: float) -> float | None:
+    """The lowest peak f such that every other peak is near an integer multiple k*f (k >= 1). Near means within
+    (k+1)/2 * resolution: f is only known to +-resolution/2, so k*f to +-k*resolution/2, and the peak itself
+    to +-resolution/2. None if no peak explains all the others (e.g. two lights that are not related)."""
+    for f in sorted(peaks_hz):
+        if all(round(p / f) >= 1 and abs(p - round(p / f) * f) <= (round(p / f) + 1) / 2 * resolution
+               for p in peaks_hz):
+            return f
+    return None
+
+
 def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmin_hz: float = 20.0,
              min_snr: float = 8.0) -> dict:
-    """Flicker spectrum of the whole sensor: the dominant frequency, the strongest peaks and the harmonics.
+    """Flicker spectrum of the whole sensor: the dominant (strongest) peak, the fundamental frequency, the strongest
+    peaks and the harmonics of the fundamental.
 
     Signal: (ON events - OFF events) in each time bin of bin_us. It follows the change of the light, so a light
-    that blinks at f gives its strongest peak at f. (The plain event count would show 2f for a symmetric blink.)
+    that blinks at f usually gives its strongest peak at f. (The plain event count would show 2f for a symmetric
+    blink.) But a harmonic can be stronger, so fundamental_hz (see fundamental()) is the flicker frequency.
+    Recordings shorter than MIN_GOOD_SECONDS get a "warning" (coarse resolution).
     Frequencies below fmin_hz (slow drift of the noise) and above fmax_hz are ignored.
     snr = amplitude / noise_floor, where noise_floor is the median amplitude in the band. A peak counts only if
     snr >= min_snr: pure noise stays below ~4 (measured 3.4..4.0), the phone screen at 240 Hz reached ~90.
@@ -123,29 +138,36 @@ def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmi
             if len(peaks) == N_PEAKS:
                 break
 
+    seconds = n_bins * bin_us / 1e6
     result = {
         "signal": "on_minus_off",
         "bin_us": bin_us,
         "fmin_hz": fmin_hz,
         "fmax_hz": fmax_hz,
         "min_snr": min_snr,
-        "seconds": n_bins * bin_us / 1e6,
+        "seconds": seconds,
         "resolution_hz": round(resolution, 4),
         "noise_floor": round(floor, 3),
         "dominant_hz": None,
+        "fundamental_hz": None,
         "peaks": [],
         "harmonics": [],
     }
+    if seconds < MIN_GOOD_SECONDS:
+        result["warning"] = (f"the recording is only {seconds:.2f} s long: the frequency resolution is "
+                             f"{resolution:.1f} Hz; record at least {MIN_GOOD_SECONDS:g} s for a precise frequency")
     if not peaks:  # no peak stands out of the noise
         return result
     top = amp[peaks[0]]
-    f0 = freq[peaks[0]]
-    result["dominant_hz"] = round(float(f0), 3)
+    result["dominant_hz"] = round(float(freq[peaks[0]]), 3)
     result["peaks"] = [{"hz": round(float(freq[i]), 3), "rel_amp": round(float(amp[i] / top), 3), "snr": snr(i)}
                        for i in peaks]
+    # the flicker frequency: the strongest peak can be a harmonic (2f was strongest in a 0.17 s real recording)
+    f0 = fundamental([float(freq[i]) for i in peaks], resolution) or float(freq[peaks[0]])
+    result["fundamental_hz"] = round(f0, 3)
 
-    # harmonics: the largest value near k*f0; f0 is only known to +-resolution/2, so k*f0 to +-k*resolution/2:
-    # search +-k bins
+    # harmonics of the fundamental: the largest value near k*f0; f0 is only known to +-resolution/2, so k*f0 to
+    # +-k*resolution/2: search +-k bins
     for k in range(2, N_HARMONICS + 1):
         if k * f0 > fmax_hz:
             break
