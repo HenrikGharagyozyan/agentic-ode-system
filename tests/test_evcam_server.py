@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from fastmcp import Client
 
-from agentic_ode.hardware.evcam import fake, store
+from agentic_ode.hardware.evcam import fake, limits, store
 from agentic_ode.hardware.evcam.connector import EVENT_DTYPE
 from agentic_ode.hardware.evcam.fake import FakeEventCamera
 from agentic_ode.mcp_servers import evcam_server
@@ -93,6 +93,7 @@ def test_hot_pixels_mask_record_spectrum(tmp_path):
     assert settings["mask"] == pixels
     (spec,) = run(("spectrum", {"recording_id": rec["recording_id"]}))
     assert spec["ok"] and abs(spec["dominant_hz"] - 240) <= spec["resolution_hz"]
+    assert spec["fundamental_hz"] == spec["dominant_hz"] and "warning" not in spec  # 2 s: no short warning
     assert spec["recording_id"] == rec["recording_id"] and spec["peaks"][0]["snr"] >= 8
 
 
@@ -103,6 +104,8 @@ def test_record_returns_no_raw_events(tmp_path):
     events, meta = store.load(rec["recording_id"], root=tmp_path)  # the events are in the file
     assert events.size == rec["summary"]["n_events"] > 0
     assert meta["fake"] is True and meta["seconds"] == 1.0
+    assert meta["settings"]["masked_pixels"] == 0 and meta["settings"]["roi"] is None
+    assert meta["recorded_s"] == 1.0 and "stopped after" not in rec["warning"]  # not stopped early
 
 
 def test_record_warns_about_active_hot_pixels():
@@ -115,6 +118,77 @@ def test_record_warns_about_active_hot_pixels():
 def test_record_no_warning_when_the_hot_pixels_are_masked():
     _, rec = run(("mask_pixels", {"pixels": [list(p) for p in fake.HOT_PIXELS]}), ("record", {"seconds": 0.5}))
     assert rec["ok"] and "warning" not in rec
+
+
+def test_record_that_stops_early_reports_the_real_duration(tmp_path, monkeypatch):
+    # first real-camera UC2 run: 30 M events in 0.17 s, but the summary said "seconds: 2.0, 14.99 Mev/s"
+    monkeypatch.setattr(limits, "MAX_EVENTS", 5_000)  # the fake camera makes ~70,000 events per second
+    (rec,) = run(("record", {"seconds": 1.0}))
+    s = rec["summary"]
+    assert s["n_events"] == 5_000 and 0 < s["seconds"] < 0.2
+    assert s["rate_mev_s"] == round(5_000 / s["seconds"] / 1e6, 6)  # rate over the real time
+    assert (f"stopped after {s['seconds']:.2f} s at 5000 events ({5_000 / s['seconds'] / 1e6:.1f} Mev/s): too much "
+            "light or activity; set an ROI, reduce the light or raise the biases, then record again") in rec["warning"]
+    assert "2 pixel(s) above 20 kHz still active" in rec["warning"]  # both warnings, joined by " | "
+    _, meta = store.load(rec["recording_id"], root=tmp_path)
+    assert meta["seconds"] == 1.0 and meta["recorded_s"] == s["seconds"]
+
+
+def fake_record(monkeypatch, keep_until_us, last_record):
+    """FakeEventCamera.record that keeps only events before keep_until_us and reports `last_record`."""
+    real = FakeEventCamera.record
+
+    def record(self, seconds):
+        ev = real(self, seconds)
+        self.last_record = last_record
+        return ev[ev["t"] < keep_until_us]
+
+    monkeypatch.setattr(FakeEventCamera, "record", record)
+
+
+def test_early_stop_is_decided_by_the_recorded_time_not_the_event_count(monkeypatch):
+    # third record of the real UC2 run: 29.95 M events (fewer than MAX_EVENTS) in 0.27 s; the summary said 2.0 s
+    fake_record(monkeypatch, 270_000, {"recorded_s": 0.27, "wall_s": 17.4, "stopped_early": True})
+    (rec,) = run(("record", {"seconds": 2.0}))
+    assert rec["summary"]["seconds"] == 0.27 and rec["summary"]["n_events"] < limits.MAX_EVENTS
+    assert f"stopped after 0.27 s at {rec['summary']['n_events']} events" in rec["warning"]
+
+
+def test_zero_events_much_faster_than_real_time_gives_a_warning(monkeypatch):
+    # second record of the real UC2 run: "recorded 2.00 s of camera time in 0.02 s wall", 0 events, ok
+    fake_record(monkeypatch, 0, {"recorded_s": 2.0, "wall_s": 0.02, "stopped_early": False})
+    (rec,) = run(("record", {"seconds": 2.0}))
+    assert rec["ok"] and rec["summary"]["n_events"] == 0
+    assert rec["warning"] == ("0 events in 0.02 s of wall time for 2 s of camera time: the camera stream delivered "
+                              "no new data; record again")
+
+
+def test_zero_events_in_real_time_is_no_warning(monkeypatch):
+    # e.g. an ROI where nothing happens: 0 events, but the recording took its full time
+    fake_record(monkeypatch, 0, {"recorded_s": 2.0, "wall_s": 2.1, "stopped_early": False})
+    (rec,) = run(("record", {"seconds": 2.0}))
+    assert rec["summary"]["n_events"] == 0 and "warning" not in rec
+
+
+def test_spectrum_says_which_settings_the_recording_was_made_with():
+    # the bug of the UC2 run on 2026-10-15: "spectrum of the masked recording" used the recording made BEFORE masking
+    before, _, _, after = run(("record", {"seconds": 0.5}),
+                              ("mask_pixels", {"pixels": [list(p) for p in fake.HOT_PIXELS]}),
+                              ("set_bias", {"name": "bias_diff_off", "value": 20}),
+                              ("record", {"seconds": 0.5}))
+    spec_before, spec_after = run(("spectrum", {"recording_id": before["recording_id"]}),
+                                  ("spectrum", {"recording_id": after["recording_id"]}))
+    zero = {"bias_diff": 0, "bias_diff_on": 0, "bias_diff_off": 0, "bias_fo": 0, "bias_hpf": 0, "bias_refr": 0}
+    assert spec_before["recorded_with"] == {"masked_pixels": 0, "biases": zero, "roi": None}
+    assert spec_after["recorded_with"] == {"masked_pixels": 2, "biases": {**zero, "bias_diff_off": 20}, "roi": None}
+
+
+def test_spectrum_of_an_old_recording_has_no_settings(tmp_path):
+    ev = np.zeros(2, dtype=EVENT_DTYPE)
+    ev["p"], ev["t"] = [1, 0], [0, 1_000_000]
+    rid = store.save(ev, {"seconds": 1.0}, root=tmp_path)  # saved without "settings", like the files before the fix
+    (spec,) = run(("spectrum", {"recording_id": rid}))
+    assert spec["ok"] and spec["recorded_with"] is None
 
 
 def test_steady_scene_has_no_peak(monkeypatch):
