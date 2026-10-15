@@ -22,6 +22,7 @@ EVENT_DTYPE = np.dtype({"names": ["x", "y", "p", "t"], "formats": ["<u2", "<u2",
 SETTLE_S = 8.0
 SETTLE_CHECK_S = 0.5  # short decoded check stream after the settle: logs the noise level record() starts from
 MAX_PIXEL_RATE = 20_000  # ev/s; a real pixel cannot fire faster (dead time ~73 us), so faster pixels are defects
+FLUSH_S = 0.5  # after an early stop: read and drop raw data this long (no decoding, so Python keeps up)
 # on-chip filters that change the event stream; open() turns all of them off so measurements are raw
 FILTERS = {
     "antiflicker": "get_i_antiflicker_module",
@@ -44,6 +45,7 @@ class EventCamera:
         self._hal = None  # the metavision_hal module, set by open()
         self._cb_id = None  # id of our one CD event callback: added in open(), removed in close()
         self._chunks: list[np.ndarray] = []  # event batches the callback receives; only record() empties it
+        self.last_record: dict | None = None  # what the last record() really did: recorded_s, wall_s, stopped_early
 
     # ---- open / close ----
 
@@ -243,13 +245,16 @@ class EventCamera:
         """Record events: skip limits.WARMUP_S (start-up burst), then collect `seconds` of camera time.
 
         Returns a structured array with fields x, y, p, t (t in us, 0 = end of the warm-up).
-        Stops early with a warning if more than limits.MAX_EVENTS events arrive.
+        Stops early with a warning if more than limits.MAX_EVENTS events arrive, and then restarts the stream
+        cleanly. self.last_record tells what really happened: recorded_s (camera time covered; less than
+        `seconds` exactly when it stopped early), wall_s, stopped_early.
         """
         seconds = limits.validate_duration(seconds)
         dev = self._require_open()
         stream, decoder = dev.get_i_events_stream(), dev.get_i_events_stream_decoder()
         self._chunks.clear()  # clear, never replace: the callback holds this exact list
         t_warm_end = t_end = None
+        stopped_early = False
         w0 = time.monotonic()
         stream.start()
         try:
@@ -268,17 +273,40 @@ class EventCamera:
                     continue
                 if sum(c.size for c in self._chunks) > limits.MAX_EVENTS:
                     log.warning("more than %d events: recording stopped early", limits.MAX_EVENTS)
+                    stopped_early = True
                     break
         finally:
-            stream.stop()  # this also drops data we have not read yet
-        covered = (min(decoder.get_last_timestamp(), t_end) - t_warm_end) / 1e6
+            stream.stop()  # this drops most of the data we have not read yet, but not always all (see below)
+        wall_s = time.monotonic() - w0
         events = np.concatenate(self._chunks) if self._chunks else np.empty(0, dtype=EVENT_DTYPE)
         self._chunks.clear()
         events = events[(events["t"] >= t_warm_end) & (events["t"] < t_end)][: limits.MAX_EVENTS]
         events["t"] -= t_warm_end
+        # the camera time the events really cover: all of `seconds`, or up to the last kept event after an early
+        # stop. (Not "events.size >= MAX_EVENTS": the window filter above can leave fewer, 2026-10-15.)
+        recorded_s = (int(events["t"].max()) + 1) / 1e6 if stopped_early and events.size else seconds
+        self.last_record = {"recorded_s": recorded_s, "wall_s": round(wall_s, 3), "stopped_early": stopped_early}
         log.info("recorded %.2f s of camera time in %.2f s wall: %d events (%.3f Mev/s)",
-                 covered, time.monotonic() - w0, events.size, events.size / covered / 1e6)
+                 recorded_s, wall_s, events.size, events.size / recorded_s / 1e6)
+        if stopped_early:
+            self._restart_stream(stream)
         return events
+
+    def _restart_stream(self, stream) -> None:
+        """After an early stop, restart the stream cleanly. Python was slower than the camera, so old unread data can
+        still wait in the driver; the next record() would take that old buffer as its start, see the next (current)
+        buffer far past its end and keep nothing (2026-10-15: 0 events in 0.02 s). Reading without decoding is fast
+        enough to drain it."""
+        w0 = time.monotonic()
+        stream.start()
+        try:
+            while time.monotonic() - w0 < FLUSH_S:
+                if stream.wait_next_buffer() < 0:
+                    break
+                stream.get_latest_raw_data()  # read and drop, no decoding
+        finally:
+            stream.stop()
+        log.info("stream restarted cleanly after the early stop (%.2f s)", time.monotonic() - w0)
 
     # ---- state ----
 
