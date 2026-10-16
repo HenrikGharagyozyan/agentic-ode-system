@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from agentic_ode.hardware.evcam import analysis
+from agentic_ode.hardware.devices.evcam import analysis
 
 
 def main(argv=None) -> int:

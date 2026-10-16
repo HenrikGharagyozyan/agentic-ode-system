@@ -4,7 +4,7 @@ Default (in memory, no separate process): lists the tools, then calls camera_inf
 mask_pixels (top 2) -> record(2.0) -> spectrum -> get_settings, and prints each call, its result and how long it
 took. Stops at the first {"ok": false}.
 
---stdio: the server runs as a subprocess, reached through agentic_ode.mcp_client (the way the agent will use it).
+--stdio: the server runs as a subprocess, reached through agentic_ode.mcp.client (the way the agent will use it).
 1. ONE persistent session: mask_pixels, then get_settings -> the mask is still there.
 2. Contrast, a NEW session for each call: mask_pixels, then get_settings -> the mask is lost (new server process,
    new camera object).
@@ -27,8 +27,8 @@ import time
 
 from fastmcp import Client
 
-from agentic_ode.mcp_client import evcam_session
-from agentic_ode.mcp_servers import evcam_server
+from agentic_ode.mcp import evcam_server
+from agentic_ode.mcp.client import evcam_session
 
 PIXELS = [[1053, 704], [926, 151]]  # the 2 known hot pixels (--stdio only needs some pixels to mask)
 
@@ -93,7 +93,7 @@ async def main() -> int:
     return 0
 
 
-# ---- --stdio: through agentic_ode.mcp_client, sync like the graph ----
+# ---- --stdio: through agentic_ode.mcp.client, sync like the graph ----
 
 def call_tool(tools: dict, name: str, args: dict, use_async: bool = False) -> dict:
     """Call one LangChain tool (sync invoke, or async ainvoke from a new event loop) and print call, result, time."""
@@ -135,7 +135,7 @@ def stdio_main() -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Smoke test of the evcam MCP server.")
     parser.add_argument("--stdio", action="store_true",
-                        help="server as a subprocess through agentic_ode.mcp_client: persistent vs new sessions")
+                        help="server as a subprocess through agentic_ode.mcp.client: persistent vs new sessions")
     args = parser.parse_args()
     # the camera's log lines (settle check, recordings) go to stderr; the results go to stdout
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(asctime)s %(levelname)s %(message)s")

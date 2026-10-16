@@ -12,7 +12,13 @@ from pathlib import Path
 
 import numpy as np
 
-from agentic_ode.tools.bench import MACROPIXEL_SIZES, Bench, Regions, enhancement, make_regions
+from agentic_ode.hardware.devices.optical_bench.simulator import (
+    MACROPIXEL_SIZES,
+    Bench,
+    Regions,
+    enhancement,
+    make_regions,
+)
 
 MAX_ITERATIONS = 20000
 CSV_NAME = "experiments.csv"

@@ -1,0 +1,45 @@
+{
+  "schema": "lumen.flicker.v1",
+  "lab": "event",
+  "run_id": "20261016-142636",
+  "recording_id": "20261016-143041-19997d",
+  "local_time": "2026-10-16T14:30:41+04:00",
+  "hardware": {
+    "model": "IDS UE-39B0XCP-E-GL",
+    "sensor": "IMX636",
+    "serial": "4110039066",
+    "real": true
+  },
+  "source": {
+    "type": "LED_PWM",
+    "reference_hz": 50,
+    "duty": null,
+    "distance_cm": null,
+    "set_by": "manual"
+  },
+  "acquisition": {
+    "requested_s": 2.0,
+    "actual_s": 0.423264,
+    "samples": 30000000,
+    "sample_kind": "events",
+    "fps": null,
+    "exposure_us": null,
+    "early_stop": true
+  },
+  "estimate": {
+    "f0_hz": 49.61,
+    "resolution_hz": 2.3624,
+    "snr": 66.3,
+    "method": "fft",
+    "harmonics_hz": [
+      151.193,
+      250.413
+    ]
+  },
+  "status": "ok",
+  "warnings": [
+    "stopped early: the 30000000 event cap was reached after 0.423 s of 2.0 s (light too bright)",
+    "the recording is only 0.42 s long: the frequency resolution is 2.4 Hz; record at least 1 s for a precise frequency"
+  ],
+  "analysis": "offline re-analysis of a saved real recording, fmin_hz=2"
+}

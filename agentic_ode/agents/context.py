@@ -4,22 +4,12 @@ from __future__ import annotations
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-from agentic_ode.state import DialogueState, Role, render_dialogue
-
-
-def decision_field(content: str, key: str) -> str:
-    """A `key: value` line of an orchestrator turn, or ''."""
-    for line in content.splitlines():
-        if line.startswith(key + ":"):
-            return line[len(key) + 1:].strip()
-    return ""
+from agentic_ode.core.dialogue import decision_field, last_orchestrator_turn, render_dialogue
+from agentic_ode.core.state import DialogueState, Role
 
 
 def latest_instruction(state: DialogueState) -> str:
-    for turn in reversed(state["dialogue"]):
-        if turn["role"] == Role.ORCHESTRATOR:
-            return decision_field(turn["content"], "instruction")
-    return ""
+    return decision_field(last_orchestrator_turn(state), "instruction")  # '' when there is no orchestrator turn
 
 
 def specialist_messages(system_prompt: str, state: DialogueState, role: Role) -> list[BaseMessage]:

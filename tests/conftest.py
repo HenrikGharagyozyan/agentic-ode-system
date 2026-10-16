@@ -6,9 +6,9 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from agentic_ode.agents import Decision
-from agentic_ode.config import Settings
+from agentic_ode.core.config import Settings
+from agentic_ode.core.state import initial_state
 from agentic_ode.graph import build_graph
-from agentic_ode.state import initial_state
 
 GOOD_SCRIPT = "print('FREE_RUN_TRAIN_RMSE: 0.01')\nprint('FREE_RUN_TEST_RMSE: 0.02')\n"
 

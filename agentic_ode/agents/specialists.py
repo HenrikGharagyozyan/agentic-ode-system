@@ -7,9 +7,9 @@ from functools import partial
 
 from agentic_ode.agents import prompts
 from agentic_ode.agents.context import specialist_messages
-from agentic_ode.config import Settings
-from agentic_ode.llm import text_of, with_retry
-from agentic_ode.state import DialogueState, Role
+from agentic_ode.core.config import Settings
+from agentic_ode.core.llm import text_of, with_retry
+from agentic_ode.core.state import DialogueState, Role
 
 
 class TextSpecialist:

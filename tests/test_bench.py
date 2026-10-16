@@ -6,9 +6,9 @@ import numpy as np
 from langchain_core.messages import AIMessage
 
 from agentic_ode.agents import Executor, finish_allowed
-from agentic_ode.cli import _auto_ask
-from agentic_ode.state import initial_state
-from agentic_ode.tools.bench import Bench, make_regions, transmission_matrix
+from agentic_ode.core.state import initial_state
+from agentic_ode.hardware.devices.optical_bench.simulator import Bench, make_regions, transmission_matrix
+from agentic_ode.runtime.cli import _auto_ask
 from agentic_ode.tools.focus import CSV_NAME, run_focus_search
 
 

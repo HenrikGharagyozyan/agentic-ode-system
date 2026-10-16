@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 from fastmcp import Client
 
-from agentic_ode.hardware.evcam import fake, limits, store
-from agentic_ode.hardware.evcam.connector import EVENT_DTYPE
-from agentic_ode.hardware.evcam.fake import FakeEventCamera
-from agentic_ode.mcp_servers import evcam_server
+from agentic_ode.hardware.devices.evcam import fake, limits, store
+from agentic_ode.hardware.devices.evcam.events import EVENT_DTYPE
+from agentic_ode.hardware.devices.evcam.fake import FakeEventCamera
+from agentic_ode.mcp import evcam_server
 
 TOOLS = {"camera_info", "get_settings", "set_bias", "find_hot_pixels", "mask_pixels", "clear_mask", "set_roi",
          "clear_roi", "record", "spectrum"}
@@ -21,11 +21,11 @@ def fake_server(tmp_path, monkeypatch):
     """Fake camera (pwm scene), recordings and log in tmp_path, no camera open before and after each test."""
     monkeypatch.setenv("EVCAM_FAKE", "1")
     monkeypatch.delenv("EVCAM_FAKE_SCENE", raising=False)
-    monkeypatch.setattr(evcam_server, "RECORDINGS_DIR", tmp_path)
-    monkeypatch.setattr(evcam_server, "LOG_FILE", tmp_path / "tool_log.jsonl")
-    evcam_server._close_camera()
+    monkeypatch.setattr(evcam_server.instrument, "recordings_dir", tmp_path)
+    monkeypatch.setattr(evcam_server.tool_log, "path", tmp_path / "tool_log.jsonl")
+    evcam_server.instrument.close()
     yield
-    evcam_server._close_camera()
+    evcam_server.instrument.close()
 
 
 @pytest.fixture
@@ -263,7 +263,7 @@ def test_camera_is_opened_once_and_closed_at_the_end(opens):
     results = run(("camera_info", {}), ("get_settings", {}), ("record", {"seconds": 0.1}))
     assert all(r["ok"] for r in results)
     assert len(opens) == 1
-    assert evcam_server._cam is None  # closed when the server stopped
+    assert not evcam_server.instrument.is_open  # closed when the server stopped
 
 
 def test_spectrum_does_not_open_the_camera(tmp_path, opens):

@@ -19,8 +19,8 @@ from pathlib import Path
 
 import numpy as np
 
-from agentic_ode.hardware.evcam import limits
-from agentic_ode.hardware.evcam.connector import EventCamera
+from agentic_ode.hardware.devices.evcam import limits
+from agentic_ode.hardware.devices.evcam.driver import EventCamera
 
 CALIBRATION_S = 0.5  # short recording used only to find the hot pixels
 DEFAULT_DIR = Path("data/evcam")  # *.npz files there are git-ignored

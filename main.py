@@ -2,7 +2,7 @@
 
 import sys
 
-from agentic_ode.cli import main
+from agentic_ode.runtime.cli import main
 
 if __name__ == "__main__":
     sys.exit(main(["run", *sys.argv[1:]]))

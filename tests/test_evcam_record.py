@@ -5,8 +5,9 @@ warm-up window filter left fewer than MAX_EVENTS events."""
 import numpy as np
 import pytest
 
-from agentic_ode.hardware.evcam import connector, limits
-from agentic_ode.hardware.evcam.connector import EVENT_DTYPE, EventCamera
+from agentic_ode.hardware.devices.evcam import driver, limits
+from agentic_ode.hardware.devices.evcam.driver import EventCamera
+from agentic_ode.hardware.devices.evcam.events import EVENT_DTYPE
 
 PER_BUFFER = 1000  # events per buffer; one buffer = 1 ms of camera time, so 1 Mev/s
 
@@ -83,7 +84,7 @@ def camera(stream: ScriptedStream) -> EventCamera:
 
 @pytest.fixture(autouse=True)
 def short_flush(monkeypatch):
-    monkeypatch.setattr(connector, "FLUSH_S", 0.01)
+    monkeypatch.setattr(driver, "FLUSH_S", 0.01)
 
 
 def test_normal_record_covers_all_the_time_and_does_not_restart():

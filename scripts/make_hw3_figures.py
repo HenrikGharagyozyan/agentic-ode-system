@@ -19,8 +19,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-from agentic_ode.config import PROJECT_ROOT  # noqa: E402
-from agentic_ode.hardware.evcam import analysis, limits, store  # noqa: E402
+from agentic_ode.core.config import PROJECT_ROOT  # noqa: E402
+from agentic_ode.hardware.devices.evcam import analysis, limits, store  # noqa: E402
 
 OUT = PROJECT_ROOT / "report" / "hw3" / "fig"
 HOT = [(926, 151), (1053, 704)]

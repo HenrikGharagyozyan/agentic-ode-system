@@ -12,15 +12,16 @@ from langchain_core.tools import StructuredTool
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.types import Command
 
-from agentic_ode import runner
 from agentic_ode.agents import Decision, Executor, prompts
-from agentic_ode.agents.hardware import schema_errors, schema_of
-from agentic_ode.cli import _auto_ask
+from agentic_ode.core.dialogue import render_dialogue
+from agentic_ode.core.state import Role, initial_state
 from agentic_ode.graph import build_graph
-from agentic_ode.mcp_client import McpSession
-from agentic_ode.mcp_servers import evcam_server
-from agentic_ode.state import Role, initial_state, render_dialogue
-from agentic_ode.transcript import save_transcript
+from agentic_ode.graph.nodes.hardware_turn import schema_errors, schema_of
+from agentic_ode.mcp import evcam_server
+from agentic_ode.mcp.client import McpSession
+from agentic_ode.runtime import runner
+from agentic_ode.runtime.cli import _auto_ask
+from agentic_ode.runtime.run_store import save_transcript
 from tests.conftest import FakeLLM
 
 CONFIG = {"recursion_limit": 150, "configurable": {"thread_id": "hw"}}
@@ -74,12 +75,12 @@ def session(tmp_path, monkeypatch):
     """The evcam MCP server with the fake camera (pwm scene), in memory; recordings and log in tmp_path."""
     monkeypatch.setenv("EVCAM_FAKE", "1")
     monkeypatch.setenv("EVCAM_FAKE_SCENE", "pwm")
-    monkeypatch.setattr(evcam_server, "RECORDINGS_DIR", tmp_path / "evcam")
-    monkeypatch.setattr(evcam_server, "LOG_FILE", tmp_path / "evcam" / "tool_log.jsonl")
-    evcam_server._close_camera()
+    monkeypatch.setattr(evcam_server.instrument, "recordings_dir", tmp_path / "evcam")
+    monkeypatch.setattr(evcam_server.tool_log, "path", tmp_path / "evcam" / "tool_log.jsonl")
+    evcam_server.instrument.close()
     with McpSession(transport=evcam_server.mcp, timeout_s=60) as s:
         yield s
-    evcam_server._close_camera()
+    evcam_server.instrument.close()
 
 
 def graph_with_camera(llm, session, tmp_path, settings):

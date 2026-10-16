@@ -1,0 +1,704 @@
+[
+  {
+    "tool": "camera_info",
+    "args": {},
+    "result": {
+      "ok": true,
+      "serial": "FAKE",
+      "sensor": "IMX636 (simulated)",
+      "width": 1280,
+      "height": 720,
+      "biases": {
+        "bias_diff": 0,
+        "bias_diff_on": 0,
+        "bias_diff_off": 0,
+        "bias_fo": 0,
+        "bias_hpf": 0,
+        "bias_refr": 0
+      },
+      "temperature_c": 35,
+      "fake": true
+    }
+  },
+  {
+    "tool": "get_settings",
+    "args": {},
+    "result": {
+      "ok": true,
+      "biases": {
+        "bias_diff": 0,
+        "bias_diff_on": 0,
+        "bias_diff_off": 0,
+        "bias_fo": 0,
+        "bias_hpf": 0,
+        "bias_refr": 0
+      },
+      "mask": [],
+      "roi": null,
+      "bias_ranges": {
+        "bias_diff": {
+          "recommended": [
+            -25,
+            23
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_diff_on": {
+          "recommended": [
+            -85,
+            140
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_diff_off": {
+          "recommended": [
+            -35,
+            190
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_fo": {
+          "recommended": [
+            -35,
+            55
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_hpf": {
+          "recommended": [
+            0,
+            120
+          ],
+          "allowed": [
+            0,
+            255
+          ]
+        },
+        "bias_refr": {
+          "recommended": [
+            -20,
+            235
+          ],
+          "allowed": [
+            -50,
+            255
+          ]
+        }
+      }
+    }
+  },
+  {
+    "tool": "find_hot_pixels",
+    "args": {},
+    "result": {
+      "ok": true,
+      "seconds": 0.5,
+      "hot_pixels": [
+        {
+          "x": 926,
+          "y": 151,
+          "count": 15048,
+          "rate_hz": 30096.0
+        },
+        {
+          "x": 1053,
+          "y": 704,
+          "count": 14865,
+          "rate_hz": 29730.0
+        }
+      ]
+    }
+  },
+  {
+    "tool": "record",
+    "args": {
+      "seconds": 1.0,
+      "note": "golden"
+    },
+    "result": {
+      "ok": true,
+      "recording_id": "<recording_id>",
+      "summary": {
+        "n_events": 71730,
+        "seconds": 1.0,
+        "rate_mev_s": 0.07173,
+        "on_fraction": 0.4998,
+        "active_pixels": 10608,
+        "top_pixels": [
+          {
+            "x": 1053,
+            "y": 704,
+            "count": 30283,
+            "rate_hz": 30283.0
+          },
+          {
+            "x": 926,
+            "y": 151,
+            "count": 29754,
+            "rate_hz": 29754.0
+          },
+          {
+            "x": 638,
+            "y": 458,
+            "count": 4,
+            "rate_hz": 4.0
+          },
+          {
+            "x": 686,
+            "y": 360,
+            "count": 4,
+            "rate_hz": 4.0
+          },
+          {
+            "x": 694,
+            "y": 436,
+            "count": 3,
+            "rate_hz": 3.0
+          }
+        ]
+      },
+      "warning": "2 pixel(s) above 20 kHz still active (defects, not light): [[1053, 704], [926, 151]]; mask them with mask_pixels and record again"
+    }
+  },
+  {
+    "tool": "mask_pixels",
+    "args": {
+      "pixels": [
+        [
+          1053,
+          704
+        ],
+        [
+          926,
+          151
+        ]
+      ]
+    },
+    "result": {
+      "ok": true,
+      "newly_masked": [
+        [
+          1053,
+          704
+        ],
+        [
+          926,
+          151
+        ]
+      ],
+      "slots_used": 2,
+      "slots_total": 64
+    }
+  },
+  {
+    "tool": "set_bias",
+    "args": {
+      "name": "bias_diff_off",
+      "value": 20
+    },
+    "result": {
+      "ok": true,
+      "name": "bias_diff_off",
+      "value": 20
+    }
+  },
+  {
+    "tool": "set_bias",
+    "args": {
+      "name": "bias_diff",
+      "value": 50
+    },
+    "result": {
+      "ok": false,
+      "error": "ValueError: bias_diff must be in the camera's recommended range -25..23, got 50"
+    }
+  },
+  {
+    "tool": "set_roi",
+    "args": {
+      "x": 440,
+      "y": 160,
+      "width": 400,
+      "height": 400
+    },
+    "result": {
+      "ok": true,
+      "roi": [
+        440,
+        160,
+        400,
+        400
+      ]
+    }
+  },
+  {
+    "tool": "get_settings",
+    "args": {},
+    "result": {
+      "ok": true,
+      "biases": {
+        "bias_diff": 0,
+        "bias_diff_on": 0,
+        "bias_diff_off": 20,
+        "bias_fo": 0,
+        "bias_hpf": 0,
+        "bias_refr": 0
+      },
+      "mask": [
+        [
+          1053,
+          704
+        ],
+        [
+          926,
+          151
+        ]
+      ],
+      "roi": [
+        440,
+        160,
+        400,
+        400
+      ],
+      "bias_ranges": {
+        "bias_diff": {
+          "recommended": [
+            -25,
+            23
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_diff_on": {
+          "recommended": [
+            -85,
+            140
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_diff_off": {
+          "recommended": [
+            -35,
+            190
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_fo": {
+          "recommended": [
+            -35,
+            55
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_hpf": {
+          "recommended": [
+            0,
+            120
+          ],
+          "allowed": [
+            0,
+            255
+          ]
+        },
+        "bias_refr": {
+          "recommended": [
+            -20,
+            235
+          ],
+          "allowed": [
+            -50,
+            255
+          ]
+        }
+      }
+    }
+  },
+  {
+    "tool": "record",
+    "args": {
+      "seconds": 1.0
+    },
+    "result": {
+      "ok": true,
+      "recording_id": "<recording_id>",
+      "summary": {
+        "n_events": 9777,
+        "seconds": 1.0,
+        "rate_mev_s": 0.009777,
+        "on_fraction": 0.5052,
+        "active_pixels": 8706,
+        "top_pixels": [
+          {
+            "x": 707,
+            "y": 340,
+            "count": 4,
+            "rate_hz": 4.0
+          },
+          {
+            "x": 716,
+            "y": 392,
+            "count": 4,
+            "rate_hz": 4.0
+          },
+          {
+            "x": 553,
+            "y": 296,
+            "count": 4,
+            "rate_hz": 4.0
+          },
+          {
+            "x": 698,
+            "y": 350,
+            "count": 3,
+            "rate_hz": 3.0
+          },
+          {
+            "x": 632,
+            "y": 323,
+            "count": 3,
+            "rate_hz": 3.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "spectrum",
+    "args": {
+      "recording_id": "<recording_id>"
+    },
+    "result": {
+      "ok": true,
+      "recording_id": "<recording_id>",
+      "recorded_with": {
+        "masked_pixels": 2,
+        "biases": {
+          "bias_diff": 0,
+          "bias_diff_on": 0,
+          "bias_diff_off": 20,
+          "bias_fo": 0,
+          "bias_hpf": 0,
+          "bias_refr": 0
+        },
+        "roi": [
+          440,
+          160,
+          400,
+          400
+        ]
+      },
+      "signal": "on_minus_off",
+      "bin_us": 100,
+      "fmin_hz": 20,
+      "fmax_hz": 2000,
+      "min_snr": 8,
+      "seconds": 0.9983,
+      "resolution_hz": 1.0017,
+      "noise_floor": 59.778,
+      "dominant_hz": 240.409,
+      "fundamental_hz": 240.409,
+      "peaks": [
+        {
+          "hz": 240.409,
+          "rel_amp": 1.0,
+          "snr": 103.5
+        },
+        {
+          "hz": 479.816,
+          "rel_amp": 0.579,
+          "snr": 60.0
+        },
+        {
+          "hz": 720.224,
+          "rel_amp": 0.35,
+          "snr": 36.2
+        },
+        {
+          "hz": 959.631,
+          "rel_amp": 0.23,
+          "snr": 23.8
+        }
+      ],
+      "harmonics": [
+        {
+          "k": 2,
+          "hz": 479.816,
+          "rel_amp": 0.579,
+          "snr": 60.0
+        },
+        {
+          "k": 3,
+          "hz": 720.224,
+          "rel_amp": 0.35,
+          "snr": 36.2
+        },
+        {
+          "k": 4,
+          "hz": 959.631,
+          "rel_amp": 0.23,
+          "snr": 23.8
+        },
+        {
+          "k": 5,
+          "hz": 1200.04,
+          "rel_amp": 0.007,
+          "snr": 0.7
+        }
+      ],
+      "warning": "the recording is only 1.00 s long: the frequency resolution is 1.0 Hz; record at least 1 s for a precise frequency"
+    }
+  },
+  {
+    "tool": "record",
+    "args": {
+      "seconds": 0.5
+    },
+    "result": {
+      "ok": true,
+      "recording_id": "<recording_id>",
+      "summary": {
+        "n_events": 4916,
+        "seconds": 0.5,
+        "rate_mev_s": 0.009832,
+        "on_fraction": 0.5077,
+        "active_pixels": 4620,
+        "top_pixels": [
+          {
+            "x": 670,
+            "y": 334,
+            "count": 3,
+            "rate_hz": 6.0
+          },
+          {
+            "x": 684,
+            "y": 309,
+            "count": 3,
+            "rate_hz": 6.0
+          },
+          {
+            "x": 605,
+            "y": 394,
+            "count": 3,
+            "rate_hz": 6.0
+          },
+          {
+            "x": 645,
+            "y": 445,
+            "count": 3,
+            "rate_hz": 6.0
+          },
+          {
+            "x": 540,
+            "y": 302,
+            "count": 3,
+            "rate_hz": 6.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "tool": "spectrum",
+    "args": {
+      "recording_id": "<recording_id>"
+    },
+    "result": {
+      "ok": true,
+      "recording_id": "<recording_id>",
+      "recorded_with": {
+        "masked_pixels": 2,
+        "biases": {
+          "bias_diff": 0,
+          "bias_diff_on": 0,
+          "bias_diff_off": 20,
+          "bias_fo": 0,
+          "bias_hpf": 0,
+          "bias_refr": 0
+        },
+        "roi": [
+          440,
+          160,
+          400,
+          400
+        ]
+      },
+      "signal": "on_minus_off",
+      "bin_us": 100,
+      "fmin_hz": 20,
+      "fmax_hz": 2000,
+      "min_snr": 8,
+      "seconds": 0.4981,
+      "resolution_hz": 2.0076,
+      "noise_floor": 45.548,
+      "dominant_hz": 240.915,
+      "fundamental_hz": 240.915,
+      "peaks": [
+        {
+          "hz": 240.915,
+          "rel_amp": 1.0,
+          "snr": 63.2
+        },
+        {
+          "hz": 479.823,
+          "rel_amp": 0.652,
+          "snr": 41.2
+        },
+        {
+          "hz": 720.739,
+          "rel_amp": 0.331,
+          "snr": 20.9
+        },
+        {
+          "hz": 959.647,
+          "rel_amp": 0.296,
+          "snr": 18.7
+        }
+      ],
+      "harmonics": [
+        {
+          "k": 2,
+          "hz": 479.823,
+          "rel_amp": 0.652,
+          "snr": 41.2
+        },
+        {
+          "k": 3,
+          "hz": 720.739,
+          "rel_amp": 0.331,
+          "snr": 20.9
+        },
+        {
+          "k": 4,
+          "hz": 959.647,
+          "rel_amp": 0.296,
+          "snr": 18.7
+        },
+        {
+          "k": 5,
+          "hz": 1194.539,
+          "rel_amp": 0.013,
+          "snr": 0.8
+        }
+      ],
+      "warning": "the recording is only 0.50 s long: the frequency resolution is 2.0 Hz; record at least 1 s for a precise frequency"
+    }
+  },
+  {
+    "tool": "clear_roi",
+    "args": {},
+    "result": {
+      "ok": true,
+      "roi": null
+    }
+  },
+  {
+    "tool": "clear_mask",
+    "args": {},
+    "result": {
+      "ok": true,
+      "mask": []
+    }
+  },
+  {
+    "tool": "get_settings",
+    "args": {},
+    "result": {
+      "ok": true,
+      "biases": {
+        "bias_diff": 0,
+        "bias_diff_on": 0,
+        "bias_diff_off": 20,
+        "bias_fo": 0,
+        "bias_hpf": 0,
+        "bias_refr": 0
+      },
+      "mask": [],
+      "roi": null,
+      "bias_ranges": {
+        "bias_diff": {
+          "recommended": [
+            -25,
+            23
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_diff_on": {
+          "recommended": [
+            -85,
+            140
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_diff_off": {
+          "recommended": [
+            -35,
+            190
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_fo": {
+          "recommended": [
+            -35,
+            55
+          ],
+          "allowed": [
+            -150,
+            200
+          ]
+        },
+        "bias_hpf": {
+          "recommended": [
+            0,
+            120
+          ],
+          "allowed": [
+            0,
+            255
+          ]
+        },
+        "bias_refr": {
+          "recommended": [
+            -20,
+            235
+          ],
+          "allowed": [
+            -50,
+            255
+          ]
+        }
+      }
+    }
+  }
+]

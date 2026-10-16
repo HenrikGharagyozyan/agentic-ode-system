@@ -1,4 +1,4 @@
-"""The executor's coding tool (write_file + run_file) and the RMSE output contract."""
+"""The executor's in-process tools: the coding tool (write_file + run_file) and the focusing tool (run_focus_search)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from langchain_core.tools import StructuredTool
 
 from agentic_ode.tools.focus import RESULT_KEY as FOCUS_RESULT_KEY
 from agentic_ode.tools.focus import format_focus, run_focus_search
-from agentic_ode.tools.metrics import TEST_RMSE_RE, TRAIN_RMSE_RE, last_rmse_line, parse_rmse, rmse_lines
 from agentic_ode.tools.workspace import RunResult, format_run, run_file, write_file
 
 WRITE_FILE = "write_file"
@@ -67,15 +66,10 @@ __all__ = [
     "format_focus",
     "run_focus_search",
     "RUN_FILE",
-    "TEST_RMSE_RE",
-    "TRAIN_RMSE_RE",
     "WRITE_FILE",
     "RunResult",
     "format_run",
-    "last_rmse_line",
     "make_executor_tools",
-    "parse_rmse",
-    "rmse_lines",
     "run_file",
     "write_file",
 ]

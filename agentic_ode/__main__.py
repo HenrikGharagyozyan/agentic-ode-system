@@ -1,5 +1,5 @@
 import sys
 
-from agentic_ode.cli import main
+from agentic_ode.runtime.cli import main
 
 sys.exit(main())
