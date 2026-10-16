@@ -46,6 +46,8 @@ def run_task(
     llm=None,
     ask: Callable[[dict], str] | None = None,
     camera: bool = False,
+    run_dir: Path | None = None,
+    on_state: Callable[[DialogueState], None] | None = None,
 ) -> RunOutcome:
     """Send the task text to the orchestrator and run the graph to its end.
 
@@ -54,11 +56,14 @@ def run_task(
     camera=True: start the event camera MCP server (EVCAM_FAKE=1 -> fake camera) with ONE session for the whole
     run, human pauses included, and give its tools to the executor. The session is closed at the end.
     Camera runs get at least CAMERA_MAX_DECISIONS decisions and CAMERA_RECURSION_LIMIT graph steps.
+    run_dir: use this (already created) folder instead of a new runs/<timestamp>/ (the web app makes it first).
+    on_state: called with every state snapshot, after the transcript is saved (the web app reads the camera
+    records and the pending call from it). An exception raised there stops the run; the camera session closes.
     """
     if camera:
         settings = replace(settings, max_decisions=max(settings.max_decisions, CAMERA_MAX_DECISIONS))
     llm = llm or make_llm(settings)
-    run_dir = new_run_dir(settings.runs_dir)
+    run_dir = run_dir or new_run_dir(settings.runs_dir)
     meta = {
         "model": settings.model,
         "task_file": task_file.name,
@@ -82,6 +87,8 @@ def run_task(
                         on_turn(turn)
                 printed = len(state["dialogue"])
                 save_transcript(run_dir, state, meta)
+                if on_state:
+                    on_state(state)
 
             paused = graph.get_state(config).interrupts
             if not paused:

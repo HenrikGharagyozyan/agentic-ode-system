@@ -1,6 +1,13 @@
 // Every request to the backend goes through this file. Components never call fetch() themselves.
 
-import type { CameraCheck, CameraStatus, Health } from "./types";
+import type {
+  CameraCheck,
+  CameraStatus,
+  ExperimentEvent,
+  ExperimentListItem,
+  ExperimentSummary,
+  Health,
+} from "./types";
 
 export const API_BASE = "/api";
 
@@ -83,3 +90,73 @@ export const getCameraStatus = (signal?: AbortSignal) => request("/camera/status
 /** Opens the camera through MCP (~10 s on the real camera). Only ever called from a button click. */
 export const checkCamera = (signal?: AbortSignal) =>
   request("/camera/check", isCameraCheck, { method: "POST", signal });
+
+// ---- experiments ----
+
+function isSummary(v: unknown): v is ExperimentSummary {
+  return isObject(v) && typeof v.id === "string" && typeof v.status === "string" && typeof v.question === "string";
+}
+
+function isEvent(v: unknown): v is ExperimentEvent {
+  return isObject(v) && typeof v.seq === "number" && typeof v.type === "string" && isObject(v.data);
+}
+
+export interface ExperimentDetail {
+  experiment: ExperimentSummary;
+  events: ExperimentEvent[];
+}
+
+function isDetail(v: unknown): v is ExperimentDetail {
+  return isObject(v) && isSummary(v.experiment) && Array.isArray(v.events) && v.events.every(isEvent);
+}
+
+export interface ExperimentList {
+  active: string | null;
+  experiments: ExperimentListItem[];
+}
+
+function isList(v: unknown): v is ExperimentList {
+  return isObject(v) && (v.active === null || typeof v.active === "string") && Array.isArray(v.experiments);
+}
+
+function isStarted(v: unknown): v is { id: string; status: string } {
+  return isObject(v) && typeof v.id === "string";
+}
+
+function isOk(v: unknown): v is { ok: true } {
+  return isObject(v) && v.ok === true;
+}
+
+const json = (method: string, body?: unknown, signal?: AbortSignal): RequestInit => ({
+  method,
+  signal,
+  headers: { "Content-Type": "application/json" },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
+
+export const startExperiment = (question: string) => request("/experiments", isStarted, json("POST", { question }));
+
+export const listExperiments = (signal?: AbortSignal) => request("/experiments", isList, { signal });
+
+export const getExperiment = (id: string, signal?: AbortSignal) =>
+  request(`/experiments/${encodeURIComponent(id)}`, isDetail, { signal });
+
+/** The answer to the graph's question. For an approval, reply is exactly "yes" or "no". */
+export const replyExperiment = (id: string, requestId: string, reply: string) =>
+  request(`/experiments/${encodeURIComponent(id)}/reply`, isOk, json("POST", { request_id: requestId, reply }));
+
+export const cancelExperiment = (id: string) =>
+  request(`/experiments/${encodeURIComponent(id)}/cancel`, isOk, json("POST"));
+
+/** The URL of the Server-Sent Events stream: the events after seq `after`, then live until the experiment ends. */
+export const eventsUrl = (id: string, after: number) =>
+  `${API_BASE}/experiments/${encodeURIComponent(id)}/events?after=${after}`;
+
+export function parseEvent(text: string): ExperimentEvent | null {
+  try {
+    const v: unknown = JSON.parse(text);
+    return isEvent(v) ? v : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,11 +1,39 @@
+import { useEffect, useState } from "react";
+
+import { listExperiments } from "./api";
 import { CameraPanel } from "./components/CameraPanel";
+import { ExperimentPanel } from "./components/ExperimentPanel";
 import { Header } from "./components/Header";
 import { Notice, Panel } from "./components/ui";
 import { useBackendStatus } from "./hooks/useBackendStatus";
+import { useExperiment } from "./hooks/useExperiment";
 
 export default function App() {
   const status = useBackendStatus();
   const online = status.health !== null;
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const experiment = useExperiment(currentId);
+
+  // after a reload (or in a second browser): follow the experiment that is running now, if there is one
+  useEffect(() => {
+    if (!online || currentId) return;
+    const ctrl = new AbortController();
+    listExperiments(ctrl.signal)
+      .then((list) => list.active && setCurrentId(list.active))
+      .catch(() => {}); // offline: the banner already says so
+    return () => ctrl.abort();
+  }, [online, currentId]);
+
+  const camera = status.camera;
+  const startBlocked = !online
+    ? "Backend offline."
+    : !camera
+      ? "Camera status unknown."
+      : camera.busy
+        ? "The camera is busy (an experiment or a check is running)."
+        : camera.mode === "real" && !camera.sdk_available
+          ? "Real mode, but the camera SDK was not found: start the backend in the evcam shell."
+          : null;
 
   return (
     <div className="app">
@@ -28,9 +56,19 @@ export default function App() {
       )}
       <main className="layout">
         <aside className="col-side">
-          <CameraPanel camera={status.camera} online={online} onChanged={status.refresh} />
+          <CameraPanel camera={camera} online={online} onChanged={status.refresh} />
         </aside>
         <div className="col-main">
+          <ExperimentPanel
+            view={experiment.view}
+            stream={experiment.stream}
+            startBlocked={startBlocked}
+            onStarted={(id) => {
+              setCurrentId(id);
+              status.refresh();
+            }}
+            onReply={experiment.reply}
+          />
           <Panel title="Recording view">
             <div className="placeholder">
               <p>No recording to show.</p>
