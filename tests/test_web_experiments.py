@@ -270,3 +270,17 @@ def test_recording_preview_only_for_the_experiments_own_recordings(fake_camera, 
     other = "20261016-000000-abcdef"  # well-formed, but not made by this experiment
     assert client.get(f"/api/experiments/{exp_id}/recordings/{other}/preview").status_code == 404
     assert client.get(f"/api/experiments/{exp_id}/recordings/..%2Fx/preview").status_code == 404
+
+
+def test_downloads_are_limited_to_the_run_files(fake_camera, settings):
+    client = TestClient(create_app(settings, llm=HwLLM([hw("record"), "finish"], [[("record", {"seconds": 0.5})]])))
+    exp_id = start(client, "Record half a second.")
+    wait_for(client, exp_id, ended)
+
+    md = client.get(f"/api/experiments/{exp_id}/download/transcript.md")
+    assert md.status_code == 200 and md.text.startswith(f"# Transcript {exp_id}")
+    assert f'filename="eventlab-{exp_id}-transcript.md"' in md.headers["content-disposition"]
+    saved = client.get(f"/api/experiments/{exp_id}/download/experiment.json").json()
+    assert saved["status"] == "completed" and saved["camera"][0]["tool"] == "record"
+    assert client.get(f"/api/experiments/{exp_id}/download/task.md").status_code == 404  # not in the list
+    assert client.get(f"/api/experiments/{exp_id}/download/..%2F..%2F.env").status_code == 404

@@ -98,3 +98,27 @@ test("the approval card says what a setting change does", () => {
   assert.match(settingChange("set_bias", { name: "bias_diff_off", value: 40 }).what, /bias_diff_off to 40/);
   assert.match(settingChange("unknown_tool", {}).risk, /Unknown setting/);
 });
+
+test("the report claims nothing the record does not hold", async () => {
+  const { buildReport } = await import("../src/report.ts");
+  seq = 0;
+  const pending = { name: "mask_pixels", args: { pixels: [[1, 2]] }, ignored: [], kind: "setting", needs_approval: true };
+  const events = [
+    ev("turn.added", { index: 1, role: "scientist", label: "scientist", content: "Plan: record 2 s." }),
+    ev("input.resolved", { request_id: "q0", reply: "no", accepted: false }), // a human-node answer, not a call
+    ev("tool.pending", pending),
+    ev("input.resolved", { request_id: "q1", reply: "no", accepted: false }),
+    ev("experiment.status", { status: "stopped", stop_reason: "decision limit (20) reached" }),
+  ];
+  const r = buildReport(summary({ status: "stopped", stop_reason: "decision limit (20) reached" }), events);
+  assert.equal(r.simulated, true);
+  assert.equal(r.verified, false);
+  assert.equal(r.conclusion, null); // no finish decision: no conclusion
+  assert.deepEqual(r.measurements, []);
+  assert.equal(r.procedure[0].approved, false);
+  assert.match(r.procedure[0].outcome, /refused/);
+  assert.ok(r.limitations.some((l) => l.startsWith("SIMULATED")));
+  assert.ok(r.limitations.some((l) => l.includes("No verified result") && l.includes("decision limit")));
+  assert.ok(r.limitations.some((l) => l.includes("The operator refused mask_pixels")));
+  assert.deepEqual(r.plan, ["Plan: record 2 s."]);
+});

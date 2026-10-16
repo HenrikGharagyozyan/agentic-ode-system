@@ -149,6 +149,10 @@ export const replyExperiment = (id: string, requestId: string, reply: string) =>
 export const cancelExperiment = (id: string) =>
   request(`/experiments/${encodeURIComponent(id)}/cancel`, isOk, json("POST"));
 
+/** A run file to download (the backend allows only transcript.md/.json, experiment.json, events.jsonl). */
+export const downloadUrl = (id: string, name: string) =>
+  `${API_BASE}/experiments/${encodeURIComponent(id)}/download/${encodeURIComponent(name)}`;
+
 /** The URL of the Server-Sent Events stream: the events after seq `after`, then live until the experiment ends. */
 export const eventsUrl = (id: string, after: number) =>
   `${API_BASE}/experiments/${encodeURIComponent(id)}/events?after=${after}`;

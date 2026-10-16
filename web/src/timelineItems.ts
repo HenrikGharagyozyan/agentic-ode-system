@@ -14,6 +14,7 @@ export interface CallItem {
   pending: ToolPending | null; // null: a result without a pending event (should not happen; shown anyway)
   status: CallStatus;
   startedAt: string; // when it was chosen, or approved
+  approved?: boolean; // the operator's answer, for a setting change
   result?: ToolResult;
   resultAt?: string;
 }
@@ -41,6 +42,7 @@ export function timelineItems(events: ExperimentEvent[], ended: boolean): { item
       case "input.resolved":
         if (open && open.status === "waiting_approval") {
           open.status = e.data.accepted ? "running" : "refused";
+          open.approved = !!e.data.accepted;
           open.startedAt = e.time;
           if (!e.data.accepted) open = null;
         }

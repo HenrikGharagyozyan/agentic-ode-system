@@ -10,6 +10,7 @@
 - POST /api/experiments/{id}/reply              the answer to the question that waits (request_id must match)
 - POST /api/experiments/{id}/cancel             stop the experiment (it stops at the next step)
 - GET  /api/experiments/{id}/recordings/{rid}/preview   image + rate of a recording THIS experiment saved (file only)
+- GET  /api/experiments/{id}/download/{name}   transcript.md, transcript.json, experiment.json or events.jsonl
 
 Rules:
 - The camera is never opened by itself: not at start, not by /status, never by a timer.
@@ -33,7 +34,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, StringConstraints
 
 from agentic_ode import __version__
@@ -45,6 +46,9 @@ from agentic_ode.web.recordings import PreviewCache, recordings_of
 
 SSE_POLL_S = 0.25  # how often the event stream looks for new events
 SSE_PING_S = 15.0  # a comment line now and then keeps proxies from closing a quiet stream
+# the files of a run folder the browser may download; nothing else in runs/<id>/ (e.g. the executor's scripts)
+DOWNLOADS = {"transcript.md": "text/markdown", "transcript.json": "application/json",
+             "experiment.json": "application/json", "events.jsonl": "application/x-ndjson"}
 
 
 class StartRequest(BaseModel):
@@ -168,6 +172,14 @@ def create_app(settings: Settings | None = None, llm=None, recordings_dir: Path 
             return previews.get(recording_id)
         except (FileNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from None
+
+    @app.get("/api/experiments/{experiment_id}/download/{name}")
+    def download(experiment_id: str, name: str) -> FileResponse:
+        found(experiment_id)  # also checks the id: only digits and one "-", never a path
+        path = settings.runs_dir / experiment_id / name
+        if name not in DOWNLOADS or not path.is_file():
+            raise HTTPException(status_code=404, detail=f"No file {name} for experiment {experiment_id}.")
+        return FileResponse(path, media_type=DOWNLOADS[name], filename=f"eventlab-{experiment_id}-{name}")
 
     @app.get("/api/experiments/{experiment_id}/events")
     async def stream_events(experiment_id: str, request: Request, after: int = 0,

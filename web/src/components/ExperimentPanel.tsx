@@ -4,29 +4,13 @@ import { useState } from "react";
 
 import { ApiError } from "../api";
 import type { ExperimentView, StreamState } from "../hooks/useExperiment";
-import { type ExperimentStatus, TERMINAL } from "../types";
+import { STATUS_TEXT, STATUS_TONE } from "../status";
+import { TERMINAL } from "../types";
 import { InputRequestCard } from "./InputRequestCard";
+import { ReportView } from "./ReportView";
 import { QuestionForm } from "./QuestionForm";
 import { Timeline } from "./Timeline";
-import { Badge, Dot, Notice, Panel, type Tone } from "./ui";
-
-const STATUS_TONE: Record<ExperimentStatus, Tone> = {
-  running: "info",
-  awaiting_input: "warn",
-  completed: "ok",
-  stopped: "warn",
-  failed: "error",
-  cancelled: "muted",
-};
-
-export const STATUS_TEXT: Record<ExperimentStatus, string> = {
-  running: "Running",
-  awaiting_input: "Waiting for you",
-  completed: "Completed: finish guard passed",
-  stopped: "Stopped without a verified result",
-  failed: "Failed",
-  cancelled: "Cancelled",
-};
+import { Badge, Dot, Notice, Panel } from "./ui";
 
 export function ExperimentPanel(props: {
   view: ExperimentView | null;
@@ -40,6 +24,7 @@ export function ExperimentPanel(props: {
 }) {
   const { view } = props;
   const s = view?.summary;
+  const [tab, setTab] = useState<"timeline" | "report">("timeline");
   const ended = !!s && TERMINAL.includes(s.status);
 
   return (
@@ -90,7 +75,24 @@ export function ExperimentPanel(props: {
           onReply={(reply) => props.onReply(s.pending!.request_id, reply)}
         />
       )}
-      {view && <Timeline events={view.events} ended={ended} />}
+      {view && (
+        <div className="tabs" role="tablist" aria-label="experiment views">
+          {(["timeline", "report"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={tab === t}
+              className={`tab${tab === t ? " tab-on" : ""}`}
+              onClick={() => setTab(t)}
+            >
+              {t === "timeline" ? "Timeline" : "Report"}
+            </button>
+          ))}
+        </div>
+      )}
+      {view && tab === "timeline" && <Timeline events={view.events} ended={ended} />}
+      {view && tab === "report" && <ReportView view={view} />}
     </Panel>
   );
 }

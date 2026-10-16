@@ -4,6 +4,7 @@ import { listExperiments } from "./api";
 import { CameraPanel } from "./components/CameraPanel";
 import { ExperimentPanel } from "./components/ExperimentPanel";
 import { Header } from "./components/Header";
+import { HistoryPanel } from "./components/HistoryPanel";
 import { MeasurementsPanel } from "./components/MeasurementsPanel";
 import { Notice } from "./components/ui";
 import { useBackendStatus } from "./hooks/useBackendStatus";
@@ -71,6 +72,13 @@ export default function App() {
       <main className="layout">
         <aside className="col-side">
           <CameraPanel camera={camera} online={online} onChanged={status.refresh} />
+          {online && (
+            <HistoryPanel
+              currentId={currentId}
+              reloadKey={`${currentId}:${experiment.view?.summary.status ?? ""}`}
+              onOpen={setCurrentId}
+            />
+          )}
         </aside>
         <div className="col-main">
           <ExperimentPanel
