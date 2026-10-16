@@ -614,3 +614,84 @@ textarea:focus,
   overflow: hidden;
   mask-image: linear-gradient(to bottom, black 60%, transparent);
 }
+
+/* ---- tool calls ---- */
+
+.tool {
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--accent-2);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 8px 12px;
+  display: grid;
+  gap: 6px;
+}
+.tool-waiting_approval {
+  border-left-color: var(--warn);
+}
+.tool-refused,
+.tool-not_run {
+  border-left-color: var(--muted);
+  opacity: 0.8;
+}
+.tool-succeeded {
+  border-left-color: var(--ok);
+}
+.tool-failed {
+  border-left-color: var(--error);
+}
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tool-name {
+  color: var(--accent-2);
+  font-weight: 600;
+}
+.tool-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-args {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 14px;
+}
+.facts dt {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.tool-warning {
+  color: var(--warn);
+  border-top: 1px dashed rgb(214 160 51 / 0.4);
+  padding-top: 4px;
+}
+.raw summary {
+  cursor: pointer;
+}
+.raw pre {
+  margin: 6px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}

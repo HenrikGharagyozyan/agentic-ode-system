@@ -4,6 +4,7 @@
 import { useState } from "react";
 
 import { ApiError } from "../api";
+import { settingChange } from "../toolSummary";
 import type { InputRequest } from "../types";
 import { Badge } from "./ui";
 
@@ -33,10 +34,22 @@ export function InputRequestCard(props: { request: InputRequest; onReply: (reply
         <span className="muted small mono">{r.request_id}</span>
       </div>
       {r.call && (
-        <div className="call mono">
-          <span className="call-name">{r.call.name}</span>
-          <span className="call-args">{JSON.stringify(r.call.args)}</span>
-        </div>
+        <>
+          <div className="call mono">
+            <span className="call-name">{r.call.name}</span>
+            <span className="call-args">{JSON.stringify(r.call.args)}</span>
+          </div>
+          <dl className="rows">
+            <div className="row">
+              <dt>Change</dt>
+              <dd>{settingChange(r.call.name, r.call.args).what}</dd>
+            </div>
+            <div className="row">
+              <dt>Watch out</dt>
+              <dd className="small">{settingChange(r.call.name, r.call.args).risk}</dd>
+            </div>
+          </dl>
+        </>
       )}
       <p className="request-question">{r.question || "(no question text)"}</p>
       {r.source === "orchestrator" && r.proposed_step && (
@@ -50,7 +63,7 @@ export function InputRequestCard(props: { request: InputRequest; onReply: (reply
           <button type="button" className="btn btn-danger" disabled={sending} onClick={() => send("no")}>
             Reject
           </button>
-          <span className="small muted">Applies to this one request only.</span>
+          <span className="small muted">Applies to this one call only; the graph runs nothing else on this answer.</span>
         </div>
       ) : (
         <form

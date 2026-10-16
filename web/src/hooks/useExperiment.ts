@@ -2,36 +2,20 @@
 //
 // Recovery: the snapshot (GET /api/experiments/{id}) has every event so far; the stream starts after the last seq.
 // When the stream drops, EventSource reconnects by itself and sends Last-Event-ID, so the server resumes there.
-// Events with a seq we already have are ignored, so nothing is shown twice.
+// After a stream error, or a gap in the seq numbers, we reload the snapshot: it may also show that the experiment
+// ended meanwhile (e.g. the backend restarted), and then the stream is closed instead of reconnecting forever.
 
 import { useCallback, useEffect, useReducer, useState } from "react";
 
 import { ApiError, cancelExperiment, eventsUrl, getExperiment, isAbort, parseEvent, replyExperiment } from "../api";
-import { type ExperimentEvent, type ExperimentSummary, TERMINAL } from "../types";
+import { reduce } from "../experimentReducer";
+import { type ExperimentEvent, TERMINAL } from "../types";
 
-export interface ExperimentView {
-  summary: ExperimentSummary;
-  events: ExperimentEvent[];
-}
-
-type Action = { type: "reset"; view: ExperimentView | null } | { type: "event"; event: ExperimentEvent };
-
-/** Pure: the new view after one action. Exported for tests and for reading the rules in one place. */
-export function reduce(view: ExperimentView | null, action: Action): ExperimentView | null {
-  if (action.type === "reset") return action.view;
-  if (view === null) return null;
-  const e = action.event;
-  const last = view.events.length ? view.events[view.events.length - 1].seq : 0;
-  if (e.seq <= last) return view; // already have it (a replay after a reconnect)
-  const summary = { ...view.summary };
-  if (e.type === "experiment.status") Object.assign(summary, e.data);
-  if (e.type === "input.required") summary.pending = e.data;
-  if (e.type === "input.resolved") summary.pending = null;
-  if (e.type === "turn.added" && e.data.role === "orchestrator") summary.decisions += 1;
-  return { summary, events: [...view.events, e] };
-}
+export type { ExperimentView } from "../experimentReducer";
 
 export type StreamState = "idle" | "loading" | "live" | "reconnecting" | "ended" | "error";
+
+const lastOf = (events: ExperimentEvent[]) => (events.length ? events[events.length - 1].seq : 0);
 
 export function useExperiment(id: string | null) {
   const [view, dispatch] = useReducer(reduce, null);
@@ -47,29 +31,51 @@ export function useExperiment(id: string | null) {
     }
     const ctrl = new AbortController();
     let source: EventSource | null = null;
-    setStream("loading");
+    let closed = false;
+    let seen = 0; // the last seq applied
 
-    getExperiment(id, ctrl.signal)
-      .then((detail) => {
-        dispatch({ type: "reset", view: { summary: detail.experiment, events: detail.events } });
-        if (TERMINAL.includes(detail.experiment.status)) {
-          setStream("ended");
+    const close = (state: StreamState) => {
+      closed = true;
+      source?.close();
+      setStream(state);
+    };
+
+    /** Take the full snapshot; true if the experiment still runs. */
+    const load = async (): Promise<boolean> => {
+      const detail = await getExperiment(id, ctrl.signal);
+      dispatch({ type: "reset", view: { summary: detail.experiment, events: detail.events } });
+      seen = lastOf(detail.events);
+      if (TERMINAL.includes(detail.experiment.status)) {
+        close("ended");
+        return false;
+      }
+      return true;
+    };
+
+    const open = () => {
+      source = new EventSource(eventsUrl(id, seen));
+      source.onopen = () => setStream("live");
+      source.onerror = () => {
+        if (closed) return;
+        setStream("reconnecting");
+        load().catch(() => {}); // backend away: EventSource keeps retrying by itself
+      };
+      source.onmessage = (msg) => {
+        const event = parseEvent(msg.data);
+        if (!event || event.experiment_id !== id || event.seq <= seen) return; // other experiment, or a replay
+        if (event.seq > seen + 1) {
+          load().catch(() => {}); // a gap: the snapshot has everything
           return;
         }
-        const after = detail.events.length ? detail.events[detail.events.length - 1].seq : 0;
-        source = new EventSource(eventsUrl(id, after));
-        source.onopen = () => setStream("live");
-        source.onerror = () => setStream(source?.readyState === EventSource.CLOSED ? "error" : "reconnecting");
-        source.onmessage = (msg) => {
-          const event = parseEvent(msg.data);
-          if (!event || event.experiment_id !== id) return; // never mix experiments
-          dispatch({ type: "event", event });
-          if (event.type === "experiment.status" && TERMINAL.includes(event.data.status)) {
-            source?.close(); // the server ends the stream too; do not let EventSource reconnect
-            setStream("ended");
-          }
-        };
-      })
+        seen = event.seq;
+        dispatch({ type: "event", event });
+        if (event.type === "experiment.status" && TERMINAL.includes(event.data.status)) close("ended");
+      };
+    };
+
+    setStream("loading");
+    load()
+      .then((running) => running && !closed && open())
       .catch((e) => {
         if (isAbort(e)) return;
         setLoadError(e instanceof ApiError ? e : new ApiError("invalid", String(e)));
@@ -77,6 +83,7 @@ export function useExperiment(id: string | null) {
       });
 
     return () => {
+      closed = true;
       ctrl.abort();
       source?.close();
     };

@@ -84,7 +84,8 @@ class Experiment:
 
     def emit(self, type_: str, data: dict) -> None:
         with self._lock:
-            event = {"seq": len(self.events) + 1, "experiment_id": self.id, "time": _now(), "type": type_,
+            event = {"seq": len(self.events) + 1, "experiment_id": self.id,
+                     "time": datetime.now().astimezone().isoformat(timespec="milliseconds"), "type": type_,
                      "data": data}
             self.events.append(event)
         with open(self.run_dir / EVENTS_JSONL, "a") as f:

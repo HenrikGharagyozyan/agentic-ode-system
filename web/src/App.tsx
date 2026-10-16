@@ -14,7 +14,8 @@ export default function App() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const experiment = useExperiment(currentId);
 
-  // after a reload (or in a second browser): follow the experiment that is running now, if there is one
+  // after a reload, or when another browser starts one (the camera turns busy): follow the running experiment
+  const busy = status.camera?.busy ?? false;
   useEffect(() => {
     if (!online || currentId) return;
     const ctrl = new AbortController();
@@ -22,7 +23,7 @@ export default function App() {
       .then((list) => list.active && setCurrentId(list.active))
       .catch(() => {}); // offline: the banner already says so
     return () => ctrl.abort();
-  }, [online, currentId]);
+  }, [online, currentId, busy]);
 
   const camera = status.camera;
   const startBlocked = !online
@@ -63,11 +64,14 @@ export default function App() {
             view={experiment.view}
             stream={experiment.stream}
             startBlocked={startBlocked}
+            loadError={experiment.loadError}
             onStarted={(id) => {
               setCurrentId(id);
               status.refresh();
             }}
+            onNew={() => setCurrentId(null)}
             onReply={experiment.reply}
+            onCancel={experiment.cancel}
           />
           <Panel title="Recording view">
             <div className="placeholder">

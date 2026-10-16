@@ -1,10 +1,14 @@
-// The experiment as it happened: every event of the graph, in order. Nothing here is invented: each item is one
-// event from the backend (a dialogue turn, a chosen camera call, its result, a question, a reply, a status).
+// The experiment as it happened. Nothing here is invented: each item comes from backend events.
+//
+// A camera call is one card that changes in place: tool.pending (chosen) -> input.resolved (approved / refused)
+// -> tool.result (the CameraRecord). The hardware turn's raw text is kept inside the card ("Raw result").
 
 import { useState } from "react";
 
 import { clock } from "../format";
+import { timelineItems } from "../timelineItems";
 import type { ExperimentEvent, TurnData } from "../types";
+import { ToolCallCard } from "./ToolCallCard";
 import { Badge, type Tone } from "./ui";
 
 const ROLE_TONE: Record<string, Tone> = {
@@ -13,21 +17,35 @@ const ROLE_TONE: Record<string, Tone> = {
   scientist: "info",
   general: "info",
   executor: "info",
-  hardware: "info",
   human: "warn",
   system: "warn",
 };
 
-export function Timeline(props: { events: ExperimentEvent[] }) {
-  const items = props.events.filter((e) => e.type !== "experiment.status" || e.data.status !== "running");
+const seconds = (from: string, to?: string) =>
+  to ? Math.max(0, (new Date(to).getTime() - new Date(from).getTime()) / 1000) : null;
+
+export function Timeline(props: { events: ExperimentEvent[]; ended: boolean }) {
+  const { items, turns } = timelineItems(props.events, props.ended);
   if (!items.length) return <p className="muted small">No events yet.</p>;
   return (
     <ol className="timeline">
-      {items.map((e) => (
-        <li key={e.seq} className={`tl-item tl-${e.type.replace(".", "-")}`}>
-          <span className="tl-time mono">{clock(e.time)}</span>
+      {items.map((it) => (
+        <li key={it.kind === "call" ? `c${it.seq}` : it.event.seq} className="tl-item">
+          <span className="tl-time mono">{clock(it.kind === "call" ? it.time : it.event.time)}</span>
           <div className="tl-body">
-            <Item event={e} />
+            {it.kind === "call" ? (
+              <ToolCallCard
+                name={it.pending?.name ?? it.result?.tool ?? "?"}
+                kind={it.pending?.kind ?? it.result?.kind ?? "read"}
+                args={it.pending?.args ?? it.result?.args ?? {}}
+                status={it.status}
+                result={it.result}
+                seconds={seconds(it.startedAt, it.resultAt)}
+                rawTurn={it.result ? turns.get(it.result.turn_index) : undefined}
+              />
+            ) : (
+              <EventItem event={it.event} />
+            )}
           </div>
         </li>
       ))}
@@ -35,57 +53,34 @@ export function Timeline(props: { events: ExperimentEvent[] }) {
   );
 }
 
-function Item(props: { event: ExperimentEvent }) {
+function EventItem(props: { event: ExperimentEvent }) {
   const e = props.event;
   switch (e.type) {
     case "turn.added":
       return <Turn turn={e.data} />;
-    case "tool.pending":
-      return (
-        <div>
-          <Badge tone="muted">{e.data.kind}</Badge>{" "}
-          <span className="mono">
-            {e.data.name}({JSON.stringify(e.data.args)})
-          </span>{" "}
-          <span className="muted small">
-            {e.data.needs_approval ? "chosen: waits for approval" : "chosen: runs now"}
-          </span>
-        </div>
-      );
-    case "tool.result":
-      return (
-        <div>
-          <Badge tone={e.data.ok ? "ok" : "error"}>{e.data.ok ? "tool ok" : "tool failed"}</Badge>{" "}
-          <span className="mono">{e.data.tool}</span>
-          {e.data.error && <span className="small tone-text-error"> {e.data.error}</span>}
-          {e.data.warnings.map((w) => (
-            <div key={w} className="small tone-text-warn">
-              warning: {w}
-            </div>
-          ))}
-        </div>
-      );
     case "input.required":
       return (
         <div>
-          <Badge tone="warn">waiting for you</Badge> <span className="small">{e.data.question}</span>
+          <Badge tone="warn">question to you</Badge> <span className="small">{e.data.question}</span>
         </div>
       );
     case "input.resolved":
       return (
         <div className="small">
           Operator replied <span className="mono">“{e.data.reply}”</span>
-          {e.data.accepted !== undefined && (e.data.accepted ? " — approved" : " — refused, the step does not run")}
+          {e.data.accepted !== undefined && (e.data.accepted ? ": approved" : ": refused, the step does not run")}
         </div>
       );
     case "experiment.status":
       return (
         <div className="small">
-          Status: <strong>{e.data.status}</strong>
-          {e.data.stop_reason ? ` (${e.data.stop_reason})` : ""}
+          Experiment <strong>{e.data.status}</strong>
+          {e.data.stop_reason ? `: ${e.data.stop_reason}` : ""}
           {e.data.error && <span className="tone-text-error"> {e.data.error}</span>}
         </div>
       );
+    default:
+      return null;
   }
 }
 
@@ -98,10 +93,10 @@ function Turn(props: { turn: TurnData }) {
   return (
     <div className="turn">
       <div className="turn-head">
-        <Badge tone={ROLE_TONE[t.role] ?? "muted"}>{t.label}</Badge>
+        <Badge tone={ROLE_TONE[t.role] ?? "muted"}>{t.role === "system" ? "graph note" : t.label}</Badge>
         {d?.next && (
           <span className="small">
-            → <strong>{d.next}</strong>
+            → <strong>{d.next === "hardware" ? "camera action" : d.next}</strong>
             {d.kind && d.kind !== "none" ? ` (${d.kind})` : ""}
           </span>
         )}
