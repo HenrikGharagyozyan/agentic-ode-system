@@ -14,6 +14,9 @@ PEAK_WINDOW_HZ = 5.0  # a spectrum peak must be the largest value within +-5 Hz;
 N_PEAKS = 5  # spectrum() reports the 5 strongest peaks
 N_HARMONICS = 5  # spectrum() reports the harmonics 2f .. 5f of the fundamental
 MIN_GOOD_SECONDS = 1.0  # spectrum() warns about shorter recordings (resolution coarser than 1 Hz)
+MAX_DIVISOR = 15  # _base_of_strongest() tests f_max / k for k = 2..15
+MAX_MULTIPLE = 9  # ... and the multiples n*f for n = 2..9
+MIN_MULTIPLES = 2  # ... of which at least 2 must be strong
 
 
 def _check_seconds(seconds: float) -> float:
@@ -82,6 +85,39 @@ def fundamental(peaks_hz: list[float], resolution: float) -> float | None:
     return None
 
 
+def _base_of_strongest(amp: np.ndarray, resolution: float, strongest: int, floor: float, fmin_hz: float,
+                       fmax_hz: float, min_snr: float) -> float | None:
+    """The base frequency of a square wave, found from the divisors of the strongest peak (index `strongest`).
+
+    A sharp square wave at f has odd harmonics 3f, 5f, 7f ... of almost the same height, so the strongest peak can
+    be 7f, and f itself may not be among the N_PEAKS peaks (real LED at 10 Hz, 2026-10-16: 70 Hz was reported).
+    So test f = f_max / k for k = 2..MAX_DIVISOR (only f >= fmin_hz) on the whole spectrum: f is accepted if the
+    spectrum at f is strong (snr >= min_snr, +-1 bin) and at least MIN_MULTIPLES of n*f (n = 2..MAX_MULTIPLE,
+    up to fmax_hz) are strong too. Returns the frequency of the strongest bin near the LOWEST accepted f, or None.
+    """
+    def strong_bin(f):  # the largest bin within +-1 bin of f if it is strong, else None
+        c = round(f / resolution)
+        lo = max(c - 1, 0)
+        if lo >= amp.size:
+            return None
+        j = lo + int(np.argmax(amp[lo: c + 2]))
+        return j if amp[j] > 0 and amp[j] >= min_snr * floor else None
+
+    f_max = strongest * resolution
+    best = None
+    for k in range(2, MAX_DIVISOR + 1):
+        f = f_max / k
+        if f < fmin_hz:
+            break  # k grows, so f only gets lower
+        j = strong_bin(f)
+        if j is None:
+            continue
+        multiples = [n * f for n in range(2, MAX_MULTIPLE + 1) if n * f <= fmax_hz]
+        if sum(strong_bin(m) is not None for m in multiples) >= MIN_MULTIPLES:
+            best = j * resolution  # a later k gives a lower f, so the last accepted one is the lowest
+    return best
+
+
 def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmin_hz: float = 20.0,
              min_snr: float = 8.0) -> dict:
     """Flicker spectrum of the whole sensor: the dominant (strongest) peak, the fundamental frequency, the strongest
@@ -89,7 +125,8 @@ def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmi
 
     Signal: (ON events - OFF events) in each time bin of bin_us. It follows the change of the light, so a light
     that blinks at f usually gives its strongest peak at f. (The plain event count would show 2f for a symmetric
-    blink.) But a harmonic can be stronger, so fundamental_hz (see fundamental()) is the flicker frequency.
+    blink.) But a harmonic can be stronger, so fundamental_hz (see _base_of_strongest() and fundamental()) is the
+    flicker frequency.
     Recordings shorter than MIN_GOOD_SECONDS get a "warning" (coarse resolution).
     Frequencies below fmin_hz (slow drift of the noise) and above fmax_hz are ignored.
     snr = amplitude / noise_floor, where noise_floor is the median amplitude in the band. A peak counts only if
@@ -163,8 +200,10 @@ def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmi
     result["dominant_hz"] = round(float(freq[peaks[0]]), 3)
     result["peaks"] = [{"hz": round(float(freq[i]), 3), "rel_amp": round(float(amp[i] / top), 3), "snr": snr(i)}
                        for i in peaks]
-    # the flicker frequency: the strongest peak can be a harmonic (2f was strongest in a 0.17 s real recording)
-    f0 = fundamental([float(freq[i]) for i in peaks], resolution) or float(freq[peaks[0]])
+    # the flicker frequency: the strongest peak can be a harmonic (2f was strongest in a 0.17 s real recording,
+    # 7f in a real 10 Hz square wave). First the divisors of the strongest peak, then the peak list, then the peak.
+    f0 = (_base_of_strongest(amp, resolution, peaks[0], floor, fmin_hz, fmax_hz, min_snr)
+          or fundamental([float(freq[i]) for i in peaks], resolution) or float(freq[peaks[0]]))
     result["fundamental_hz"] = round(f0, 3)
 
     # harmonics of the fundamental: the largest value near k*f0; f0 is only known to +-resolution/2, so k*f0 to

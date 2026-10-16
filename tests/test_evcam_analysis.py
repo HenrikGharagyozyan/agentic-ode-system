@@ -153,6 +153,28 @@ def test_spectrum_fundamental_equals_dominant_for_a_symmetric_blink():
     assert s["fundamental_hz"] == s["dominant_hz"] and abs(s["fundamental_hz"] - 240) <= s["resolution_hz"]
 
 
+@pytest.mark.parametrize("seed", range(7, 12))
+def test_spectrum_finds_the_base_of_a_square_wave(seed):
+    # real LED at 10 Hz (2026-10-16): sharp edges give odd harmonics 3f, 5f, 7f ... of the same height, so the 5
+    # strongest peaks may not contain 10 Hz (70 Hz was reported). The divisors of the strongest peak find it.
+    # fmax_hz=150: the band holds the odd harmonics up to 15f, the largest divisor that is tested (seeds 7 and 8
+    # gave 30 Hz and 90 Hz before the fix)
+    s = spectrum(blinking_light(10, 2.0, np.random.default_rng(seed), events_per_edge=200, jitter_us=50),
+                 fmin_hz=2, fmax_hz=150)
+    assert abs(s["fundamental_hz"] - 10) <= s["resolution_hz"]
+
+
+def test_spectrum_pure_sine_keeps_its_frequency():
+    # ON events more likely when sin(2*pi*240*t) > 0, OFF events when < 0: one peak at 240 Hz, no harmonics,
+    # so no divisor of 240 Hz is accepted
+    rng = np.random.default_rng(8)
+    t = rng.integers(0, 2_000_000, 200_000)
+    p = rng.random(t.size) < 0.5 + 0.4 * np.sin(2 * np.pi * 240 * t / 1e6)
+    s = spectrum(make_events(np.zeros(t.size), np.zeros(t.size), p, t), fmin_hz=2, fmax_hz=2000)
+    assert abs(s["dominant_hz"] - 240) <= s["resolution_hz"]
+    assert s["fundamental_hz"] == s["dominant_hz"]
+
+
 def test_spectrum_warns_about_short_recordings():
     short = spectrum(blinking_light(240, 0.5, np.random.default_rng(6)))
     assert short["warning"] == ("the recording is only 0.50 s long: the frequency resolution is 2.0 Hz; "
