@@ -140,3 +140,28 @@ export type ExperimentEvent = EventBase &
     | { type: "input.required"; data: InputRequest }
     | { type: "input.resolved"; data: { request_id: string; reply: string; accepted?: boolean } }
   );
+
+// ---- plot data of a saved recording (agentic_ode/web/recordings.py) ----
+
+export interface RecordingPreview {
+  recording_id: string;
+  created: string | null;
+  note: string;
+  fake: boolean | null;
+  seconds_asked: number | null;
+  recorded_s: number | null;
+  n_events: number;
+  settings: { masked_pixels?: number; biases?: Record<string, number>; roi?: number[] | null } | null;
+  image: {
+    width: number;
+    height: number;
+    bin_px: number;
+    sensor_width: number;
+    sensor_height: number;
+    scale: string;
+    on: { data: string; scale_top: number };
+    off: { data: string; scale_top: number };
+  };
+  rate: { bin_s: number; on_hz: number[]; off_hz: number[] } | null;
+  hot_pixels: { x: number; y: number; count: number; rate_hz: number }[];
+}

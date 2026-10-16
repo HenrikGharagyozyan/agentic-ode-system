@@ -9,6 +9,7 @@
 - GET  /api/experiments/{id}/events?after=N     Server-Sent Events: the events after seq N, then live until the end
 - POST /api/experiments/{id}/reply              the answer to the question that waits (request_id must match)
 - POST /api/experiments/{id}/cancel             stop the experiment (it stops at the next step)
+- GET  /api/experiments/{id}/recordings/{rid}/preview   image + rate of a recording THIS experiment saved (file only)
 
 Rules:
 - The camera is never opened by itself: not at start, not by /status, never by a timer.
@@ -28,6 +29,7 @@ import os
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -36,8 +38,10 @@ from pydantic import BaseModel, StringConstraints
 
 from agentic_ode import __version__
 from agentic_ode.core.config import Settings
+from agentic_ode.hardware.devices.evcam import store
 from agentic_ode.mcp.client import evcam_session
 from agentic_ode.web.experiments import TERMINAL, ConflictError, ExperimentManager
+from agentic_ode.web.recordings import PreviewCache, recordings_of
 
 SSE_POLL_S = 0.25  # how often the event stream looks for new events
 SSE_PING_S = 15.0  # a comment line now and then keeps proxies from closing a quiet stream
@@ -52,14 +56,16 @@ class ReplyRequest(BaseModel):
     reply: Annotated[str, StringConstraints(strip_whitespace=True, max_length=2000)]
 
 
-def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
+def create_app(settings: Settings | None = None, llm=None, recordings_dir: Path | None = None) -> FastAPI:
     """A new app with its own camera lock, last check and experiments (each test gets a fresh one).
-    settings: default Settings.from_env() (.env: MODEL, key, runs dir). llm: a fake model in the tests."""
+    settings: default Settings.from_env() (.env: MODEL, key, runs dir). llm: a fake model in the tests.
+    recordings_dir: where the MCP server saves recordings (default runs/evcam/, the server's own default)."""
     settings = settings or Settings.from_env()
     app = FastAPI(title="EventLab", version=__version__)
     mode = "simulated" if os.environ.get("EVCAM_FAKE") == "1" else "real"
     camera_lock = threading.Lock()
     experiments = ExperimentManager(settings, camera_lock, mode, llm)
+    previews = PreviewCache(recordings_dir or store.DEFAULT_ROOT)
     last_check: dict | None = None  # result of the last POST /api/camera/check; None = never checked
 
     # ---- health and camera ----
@@ -151,6 +157,17 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
         except ConflictError as e:
             raise HTTPException(status_code=409, detail=str(e)) from None
         return {"ok": True, "detail": "Cancel requested: the run stops after the current step."}
+
+    @app.get("/api/experiments/{experiment_id}/recordings/{recording_id}/preview")
+    def recording_preview(experiment_id: str, recording_id: str) -> dict:
+        """Only a recording that this experiment's own record calls returned: one experiment never shows another's
+        data. A plain def: a large real recording takes a moment to read."""
+        if recording_id not in recordings_of(found(experiment_id)["camera"]):
+            raise HTTPException(status_code=404, detail=f"This experiment made no recording {recording_id}.")
+        try:
+            return previews.get(recording_id)
+        except (FileNotFoundError, ValueError) as e:
+            raise HTTPException(status_code=404, detail=str(e)) from None
 
     @app.get("/api/experiments/{experiment_id}/events")
     async def stream_events(experiment_id: str, request: Request, after: int = 0,

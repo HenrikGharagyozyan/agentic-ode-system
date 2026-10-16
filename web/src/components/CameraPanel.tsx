@@ -48,7 +48,7 @@ export function CameraPanel(props: { camera: CameraStatus | null; online: boolea
               ) : camera.mode === "real" ? (
                 <Badge tone="error" title="Start the backend in the evcam shell">not found</Badge>
               ) : (
-                <Badge tone="muted">not found (not needed in simulation)</Badge>
+                <><Badge tone="muted">not found</Badge> <span className="small muted">not needed in simulation</span></>
               )}
             </Row>
             <Row label="Camera owner">

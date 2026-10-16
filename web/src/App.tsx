@@ -4,14 +4,27 @@ import { listExperiments } from "./api";
 import { CameraPanel } from "./components/CameraPanel";
 import { ExperimentPanel } from "./components/ExperimentPanel";
 import { Header } from "./components/Header";
-import { Notice, Panel } from "./components/ui";
+import { MeasurementsPanel } from "./components/MeasurementsPanel";
+import { Notice } from "./components/ui";
 import { useBackendStatus } from "./hooks/useBackendStatus";
 import { useExperiment } from "./hooks/useExperiment";
+
+const idFromHash = () => /^#\/experiments\/(\d{8}-\d{6})$/.exec(window.location.hash)?.[1] ?? null;
 
 export default function App() {
   const status = useBackendStatus();
   const online = status.health !== null;
-  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [currentId, setCurrentId] = useState<string | null>(idFromHash);
+  useEffect(() => {
+    // the open experiment is in the URL (#/experiments/<id>): a reload or a shared link opens it again
+    const target = currentId ? `#/experiments/${currentId}` : "#/";
+    if (window.location.hash !== target) window.history.replaceState(null, "", target);
+  }, [currentId]);
+  useEffect(() => {
+    const onHash = () => setCurrentId(idFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const experiment = useExperiment(currentId);
 
   // after a reload, or when another browser starts one (the camera turns busy): follow the running experiment
@@ -73,14 +86,13 @@ export default function App() {
             onReply={experiment.reply}
             onCancel={experiment.cancel}
           />
-          <Panel title="Recording view">
-            <div className="placeholder">
-              <p>No recording to show.</p>
-              <p className="muted small">
-                Event-count images and rates will be drawn from saved recordings (planned). This is not a live stream.
-              </p>
-            </div>
-          </Panel>
+        </div>
+        <div className="col-data">
+          <MeasurementsPanel
+            experimentId={experiment.view?.summary.id ?? null}
+            mode={experiment.view?.summary.mode ?? null}
+            events={experiment.view?.events ?? []}
+          />
         </div>
       </main>
     </div>

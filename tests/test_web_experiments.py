@@ -249,3 +249,24 @@ def test_bad_requests(settings):
     assert client.get("/api/experiments/..%2F..%2Fetc").status_code == 404
     assert client.get("/api/experiments/nope/events").status_code == 404
     assert client.post("/api/experiments/20990101-000000/cancel").status_code == 404
+
+
+# ---- plot data from saved recordings ----
+
+def test_recording_preview_only_for_the_experiments_own_recordings(fake_camera, settings, tmp_path):
+    client = TestClient(create_app(settings, llm=HwLLM([hw("record"), "finish"], [[("record", {"seconds": 0.5})]]),
+                                   recordings_dir=tmp_path / "evcam"))
+    exp_id = start(client, "Record half a second.")
+    body = wait_for(client, exp_id, ended)
+    rid = next(e["data"]["result"]["recording_id"] for e in body["events"] if e["type"] == "tool.result")
+
+    p = client.get(f"/api/experiments/{exp_id}/recordings/{rid}/preview").json()
+    assert p["recording_id"] == rid and p["fake"] is True
+    assert p["recorded_s"] == 0.5 and p["n_events"] > 0
+    assert (p["image"]["width"], p["image"]["height"]) == (320, 180)
+    assert {(h["x"], h["y"]) for h in p["hot_pixels"]} == {(1053, 704), (926, 151)}  # the fake camera's defects
+    assert len(p["rate"]["on_hz"]) == len(p["rate"]["off_hz"]) == 50  # 0.5 s in 10 ms bins
+
+    other = "20261016-000000-abcdef"  # well-formed, but not made by this experiment
+    assert client.get(f"/api/experiments/{exp_id}/recordings/{other}/preview").status_code == 404
+    assert client.get(f"/api/experiments/{exp_id}/recordings/..%2Fx/preview").status_code == 404

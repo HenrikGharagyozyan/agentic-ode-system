@@ -7,6 +7,7 @@ import type {
   ExperimentListItem,
   ExperimentSummary,
   Health,
+  RecordingPreview,
 } from "./types";
 
 export const API_BASE = "/api";
@@ -160,3 +161,15 @@ export function parseEvent(text: string): ExperimentEvent | null {
     return null;
   }
 }
+
+function isPreview(v: unknown): v is RecordingPreview {
+  return isObject(v) && typeof v.recording_id === "string" && isObject(v.image) && Array.isArray(v.hot_pixels);
+}
+
+/** Image and rate of a recording that this experiment saved (read from the file; never opens the camera). */
+export const getRecordingPreview = (experimentId: string, recordingId: string, signal?: AbortSignal) =>
+  request(
+    `/experiments/${encodeURIComponent(experimentId)}/recordings/${encodeURIComponent(recordingId)}/preview`,
+    isPreview,
+    { signal },
+  );
