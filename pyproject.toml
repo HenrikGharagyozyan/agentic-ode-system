@@ -31,6 +31,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+# EventLab web API (agentic_ode/web/); uvicorn is listed because web/__main__.py uses it directly
+web = ["fastapi>=0.143", "uvicorn>=0.30"]
 
 [project.scripts]
 agentic-ode = "agentic_ode.runtime.cli:main"
