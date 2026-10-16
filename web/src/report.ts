@@ -45,7 +45,11 @@ export function buildReport(summary: ExperimentSummary, events: ExperimentEvent[
   const finished = TERMINAL.includes(summary.status);
   const turns = events.flatMap((e) => (e.type === "turn.added" ? [e.data] : []));
   const plan = turns.filter((t) => t.role === "scientist").map((t) => t.content);
-  const finish = [...turns].reverse().find((t) => t.role === "orchestrator" && t.decision?.next === "finish");
+  // the final statement: the last orchestrator decision that proposed to finish, directly (next: finish) or through
+  // the operator's approval (next: human, proposed_next: finish), as the real model does
+  const finish = [...turns]
+    .reverse()
+    .find((t) => t.role === "orchestrator" && (t.decision?.next === "finish" || t.decision?.proposed_next === "finish"));
 
   const procedure: ProcedureStep[] = [];
   for (const item of timelineItems(events, finished).items) {
@@ -111,6 +115,15 @@ export function buildReport(summary: ExperimentSummary, events: ExperimentEvent[
       limitations.push(`The operator refused ${step.tool}: ${settingChange(step.tool, step.args).what}`);
     }
     if (step.outcome.startsWith("failed")) limitations.push(`${step.tool} ${step.outcome}`);
+  }
+  for (const t of turns) {
+    const refusedStep = /^The human refused the step '([^']+)'/.exec(t.content);
+    if (t.role === "system" && refusedStep) {
+      limitations.push(`The operator refused the proposed step "${refusedStep[1]}"; it did not run.`);
+    }
+    if (t.role === "human" && !/^(yes|y|no|n)\b/i.test(t.content.trim())) {
+      limitations.push(`The operator steered the model with a free-text answer: "${t.content.trim()}"`);
+    }
   }
   const warnings = new Set(events.flatMap((e) => (e.type === "tool.result" ? e.data.warnings : [])));
   for (const w of warnings) limitations.push(`Tool warning: ${w}`);

@@ -122,3 +122,31 @@ test("the report claims nothing the record does not hold", async () => {
   assert.ok(r.limitations.some((l) => l.includes("The operator refused mask_pixels")));
   assert.deepEqual(r.plan, ["Plan: record 2 s."]);
 });
+
+test("a finish approved by the operator still gives the conclusion text", async () => {
+  const { buildReport } = await import("../src/report.ts");
+  seq = 0;
+  const decision = { next: "human", instruction: "Report 240.0 Hz.", reason: "spectrum done", kind: "hard", proposed_next: "finish" };
+  const events = [
+    ev("turn.added", { index: 9, role: "orchestrator", label: "orchestrator", content: "...", decision }),
+    ev("input.resolved", { request_id: "q4", reply: "yes", accepted: true }),
+    ev("experiment.status", { status: "completed", stop_reason: "finish" }),
+  ];
+  const r = buildReport(summary({ status: "completed", stop_reason: "finish" }), events);
+  assert.deepEqual(r.conclusion, { statement: "Report 240.0 Hz.", reason: "spectrum done" });
+  assert.equal(r.verified, true);
+});
+
+test("the report says when the operator refused a step or steered the model", async () => {
+  const { buildReport } = await import("../src/report.ts");
+  seq = 0;
+  const events = [
+    ev("turn.added", { index: 3, role: "human", label: "human", content: "no" }),
+    ev("turn.added", { index: 4, role: "system", label: "system", content: "The human refused the step 'executor'. It did NOT run." }),
+    ev("turn.added", { index: 6, role: "human", label: "human", content: "Use the spectrum tool instead." }),
+  ];
+  const r = buildReport(summary(), events);
+  assert.ok(r.limitations.includes('The operator refused the proposed step "executor"; it did not run.'));
+  assert.ok(r.limitations.some((l) => l.includes('free-text answer: "Use the spectrum tool instead."')));
+  assert.ok(!r.limitations.some((l) => l.includes('free-text answer: "no"')));
+});
