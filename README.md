@@ -92,6 +92,89 @@ print(outcome.run_dir, outcome.state["stop_reason"])
 
 Each run writes `runs/<timestamp>/` with the executor's scripts, `transcript.json` (the dialogue plus run records) and `transcript.md`. Camera recordings and the tool log go to `runs/evcam/`. Only the run used in the report is committed.
 
+## EventLab (web app)
+
+EventLab is a browser front end for the same system: it starts a camera run of the existing graph, shows every
+turn and every camera call as it happens, asks the operator for approvals, and shows the measurements and a report.
+It adds no second agent and no second path to the camera:
+
+```
+browser (React, web/) --HTTP + Server-Sent Events--> FastAPI (agentic_ode/web/, 127.0.0.1 only)
+    --> run_task(camera=True) --> the graph (unchanged) --> MCP client --> evcam MCP server --> camera or fake camera
+```
+
+- One experiment at a time: it owns the camera (the same lock as "Check camera"); a second one gets 409.
+- Approve / Reject answer the graph's own question (`hw_approve` or the human node) with exactly "yes" / "no";
+  the API never calls a camera tool itself. Other questions get a free-text answer.
+- Status updates never open the camera. Only the "Check camera" button does (one `camera_info` call, ~10 s on the
+  real camera), and never automatically.
+- Plots come from the SAVED recordings (`runs/evcam/<id>.npz`), labelled with recording id, duration and time; there
+  is no live event stream. The spectrum chart shows the detected peaks only (what the `spectrum` tool returns).
+- Every experiment is saved in `runs/<id>/`: `experiment.json` (summary + CameraRecords), `events.jsonl` (every
+  event), `task.md`, and the usual `transcript.json` / `transcript.md`. The report is built from these files only.
+- Real or simulated is fixed when the backend starts (`EVCAM_FAKE`); every panel and the report show it.
+- No login: keep both servers on 127.0.0.1. Put authentication in front before any remote use.
+
+Install (once). The camera venv `~/mv-venv` is the environment that works with the SDK and the tests:
+
+```bash
+~/mv-venv/bin/python -m pip install -e '.[web]'      # FastAPI (uvicorn is already there)
+cd web && npm install --ignore-scripts               # React, Vite, TypeScript (exact versions, package-lock.json)
+```
+
+Run with the **fake camera** (two terminals; the model comes from `.env`, each experiment uses model requests):
+
+```bash
+# terminal 1: the API on http://127.0.0.1:8000 (EVCAM_FAKE_SCENE=dark|pwm|steady, default pwm = 240 Hz)
+cd ~/Projects/agentic-ode-system && EVCAM_FAKE=1 ~/mv-venv/bin/python -m agentic_ode.web
+# terminal 2: the web app on http://127.0.0.1:5173 (it forwards /api to port 8000)
+cd ~/Projects/agentic-ode-system/web && npm run dev
+```
+
+Run with the **real camera**:
+
+```bash
+# terminal 1: in the evcam shell (sets the SDK paths); close metavision_viewer and any CLI camera run first
+evcam
+cd ~/Projects/agentic-ode-system && unset EVCAM_FAKE && python -m agentic_ode.web
+# terminal 2: the same as above
+cd ~/Projects/agentic-ode-system/web && npm run dev
+```
+
+Open http://127.0.0.1:5173. A link `#/experiments/<id>` opens one experiment; the History panel lists all of them.
+
+Tests and checks:
+
+```bash
+~/mv-venv/bin/python -m pytest -q -p no:cacheprovider   # all Python tests, incl. tests/test_web_*.py (fake model,
+                                                        # fake camera in memory; no hardware, no API calls)
+cd web && npm test                                      # the pure frontend logic (node --test, no extra packages)
+cd web && npm run typecheck && npm run build            # TypeScript check and production build
+```
+
+### Real-camera checklist
+
+1. Close `metavision_viewer` and every other camera program (only one process can open the camera).
+2. Start terminal 1 as above **in the `evcam` shell**, without `EVCAM_FAKE`. Start terminal 2.
+3. In the browser, the header shows **Real hardware mode**, the Camera panel **REAL HARDWARE**, and the SDK
+   **found**. If the SDK is "not found", the backend was not started in the `evcam` shell: stop it and start again.
+4. Click **Check camera** once (~10–12 s). Expect serial 4110039066, sensor IMX636, 1280 × 720, source
+   **physical camera**. The camera is released after the check.
+5. Hold the phone screen in front of the sensor (no lens: it sees the total light change). Choose the example
+   **Flicker frequency** and click **Start experiment**.
+6. When the first `record` warns about pixels above 20 kHz, the model should ask for `mask_pixels`. **Approve only
+   the pixels that the warning lists** (usually (1053, 704) and (926, 151); after a fresh open they can show up on
+   one pixel, see docs/hw3-hardware.md). Reject any other setting change you did not expect.
+7. If the model asks to write an analysis script, you may answer **no** and, at its next question, point it to the
+   `spectrum` tool (the first real-model run did exactly this).
+8. Check the result: the Measurements panel and the Report show **REAL CAMERA DATA**, the recording ids, the
+   fundamental with ± resolution and its SNR. A phone screen showed ~240 Hz before; a new run may differ.
+9. Compare the report's procedure table with the server log:
+   `tail -n 20 runs/evcam/tool_log.jsonl`: the same tools, the same arguments, the same `ok` values and recording
+   ids; each recording file exists: `ls runs/evcam/<recording id>.npz`.
+10. Afterwards the Camera panel shows the owner **free**; the CLI (`agentic-ode run --camera`) can use the camera
+    again while no web experiment runs.
+
 ## Development
 
 ```bash
@@ -115,6 +198,8 @@ agentic_ode/
   mcp_servers/     evcam_server.py: the documented server command (alias of mcp/evcam_server.py)
   runtime/         cli (agentic-ode run | report), runner, run_store (transcripts)
   reporting/       report HTML + PDF, graph drawing
+  web/             EventLab API (FastAPI): app.py, experiments.py (one-at-a-time runs), events.py, recordings.py
+web/               EventLab browser app (React + TypeScript + Vite, plain CSS); tests/ run with node --test
 tests/             offline tests (conftest.py holds the fake model; snapshots/ the pinned behaviour)
 scripts/           camera capture and analysis, HW3 figures, MCP smoke test
 docs/              architecture.md (this layout), refactor-plan.md, hardware notes
