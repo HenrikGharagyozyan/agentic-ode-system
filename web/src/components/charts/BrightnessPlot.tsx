@@ -1,15 +1,17 @@
 // Brightness change over the time of ONE saved recording, reconstructed from its events (each ON = +Δ, each
-// OFF = −Δ, leaky integral). One series, one y axis in contrast steps Δ; a dashed line marks 0.
+// OFF = −Δ, leaky integral). One series, one y axis in contrast steps Δ; a dashed line marks 0. Optional bands
+// shade the edge windows: light red = rise windows, light blue = fall windows (the moments the edge images show).
 
 import { useState } from "react";
 
+import type { EdgeWindow } from "../../types";
 import { short, ticks } from "./axes";
 
 const W = 640;
 const H = 212;
 const M = { l: 52, r: 16, t: 14, b: 42 };
 
-export function BrightnessPlot(props: { t: number[]; v: number[]; label: string }) {
+export function BrightnessPlot(props: { t: number[]; v: number[]; label: string; bands?: EdgeWindow[] }) {
   const { t, v } = props;
   const n = t.length;
   const [hover, setHover] = useState<number | null>(null);
@@ -41,6 +43,18 @@ export function BrightnessPlot(props: { t: number[]; v: number[]; label: string 
             </text>
           </g>
         ))}
+        {(props.bands ?? [])
+          .filter((b) => b.t0_us / 1e6 < tMax)
+          .map((b) => (
+            <rect
+              key={`${b.kind}${b.t0_us}`}
+              x={x(b.t0_us / 1e6)}
+              y={M.t}
+              width={x(Math.min(b.t1_us / 1e6, tMax)) - x(b.t0_us / 1e6)}
+              height={H - M.t - M.b}
+              className={`band band-${b.kind}`}
+            />
+          ))}
         <line x1={M.l} x2={W - M.r} y1={y(0)} y2={y(0)} className="ref-line" />
         {ticks(0, tMax, 5).map((s) => (
           <text key={s} x={x(s)} y={H - M.b + 16} className="tick" textAnchor="middle">

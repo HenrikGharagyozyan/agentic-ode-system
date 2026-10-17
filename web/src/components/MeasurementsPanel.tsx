@@ -4,11 +4,11 @@
 
 import { useEffect, useState } from "react";
 
-import { ApiError, getRecordingPreview, isAbort } from "../api";
+import { ApiError, getRecordingPreview, getWindowDelta, isAbort } from "../api";
 import { brightnessCsv } from "../csv";
 import { clock } from "../format";
 import { type Measurement, measurements } from "../measurements";
-import type { CameraMode, ExperimentEvent, Json, RecordingPreview } from "../types";
+import type { CameraMode, ExperimentEvent, Json, RecordingPreview, WindowDelta } from "../types";
 import { BrightnessPlot } from "./charts/BrightnessPlot";
 import { EventImage } from "./charts/EventImage";
 import { DeltaImage, TimeImage } from "./charts/MapImages";
@@ -121,7 +121,7 @@ function RecordingBlock(props: { experimentId: string; m: Measurement; mode: Cam
           <EventImage preview={preview.data} />
           <h3 className="h3">Event rate</h3>
           {preview.data.rate ? <RatePlot rate={preview.data.rate} /> : <p className="small muted">No events: no rate.</p>}
-          <DeltaReconstruction preview={preview.data} />
+          <DeltaReconstruction experimentId={props.experimentId} preview={preview.data} />
           <p className="small muted">
             Settings at recording time: {preview.data.settings?.masked_pixels ?? "?"} masked pixel(s), ROI{" "}
             {preview.data.settings?.roi ? preview.data.settings.roi.join(", ") : "none"}, biases{" "}
@@ -148,11 +148,15 @@ function RecordingBlock(props: { experimentId: string; m: Measurement; mode: Cam
   );
 }
 
-function DeltaReconstruction(props: { preview: RecordingPreview }) {
+function DeltaReconstruction(props: { experimentId: string; preview: RecordingPreview }) {
   const { brightness_curve: curve, delta_image: delta, time_image: time, image, recording_id } = props.preview;
   if (curve === undefined) return null; // an older backend: it does not send the delta reconstruction yet
   if (!curve || !delta || !time) return <p className="small muted">No events: no brightness change, delta or time image.</p>;
 
+  const edges = props.preview.edge_images;
+  const windows = props.preview.edge_windows ?? [];
+  const firstRise = windows.find((w) => w.kind === "rise");
+  const lengthMs = (props.preview.recorded_s ?? 0) * 1000;
   const download = () => {
     const url = URL.createObjectURL(new Blob([brightnessCsv(curve.t_s, curve.delta_l)], { type: "text/csv" }));
     const a = document.createElement("a");
@@ -171,17 +175,81 @@ function DeltaReconstruction(props: { preview: RecordingPreview }) {
           Download brightness CSV
         </button>
       </div>
-      <BrightnessPlot t={curve.t_s} v={curve.delta_l} label="brightness change over the whole recording" />
+      <BrightnessPlot t={curve.t_s} v={curve.delta_l} label="brightness change over the whole recording" bands={windows} />
       <h4 className="small">First {zoomMs} ms at full resolution ({curve.bin_s * 1e6} µs bins)</h4>
-      <BrightnessPlot t={curve.zoom.t_s} v={curve.zoom.delta_l} label={`brightness change, first ${zoomMs} ms`} />
+      <BrightnessPlot t={curve.zoom.t_s} v={curve.zoom.delta_l} label={`brightness change, first ${zoomMs} ms`} bands={windows} />
       <p className="small muted">
         Reconstructed from events: each ON = +Δ, each OFF = −Δ; leaky integration τ = {curve.leak_tau_s} s; not an
         absolute brightness. Mean change per active pixel; hot pixels left out. Full plot: {curve.step_s * 1000} ms
         steps; the CSV holds these points (t_s, delta_L).
+        {windows.length > 0 && (
+          <>
+            {" "}
+            Shaded: <span className="legend-swatch rise" /> rise windows and <span className="legend-swatch fall" /> fall
+            windows, the moments the edge images below show.
+          </>
+        )}
       </p>
+
+      <h3 className="h3">Where did the light change (saved recording, not live)</h3>
+      {edges ? (
+        <>
+          <p className="small muted">
+            f0 = {edges.f0_hz} Hz ({edges.f0_source}, resolution {edges.resolution_hz} Hz)
+            {edges.saved_f0_hz !== null && ` · saved spectrum: ${edges.saved_f0_hz} Hz`}. A delta image over a full period
+            sums to about 0, so the rising and the falling edges are shown separately, each window 1/4 period wide.
+          </p>
+          {edges.f0_note && (
+            <Notice tone="warn" title="Saved f0 is outdated">
+              {edges.f0_note}
+            </Notice>
+          )}
+          <div className="image-pair">
+            <div>
+              <h4 className="small">
+                LED turns ON: where the light increased (Σ over {edges.n_rise} rising edges, window {edges.window_ms} ms)
+              </h4>
+              <DeltaImage
+                image={image}
+                delta={edges.rise}
+                span={`${edges.n_rise} rising-edge windows of ${edges.window_ms} ms`}
+                label="delta image summed over the rising edges"
+              />
+            </div>
+            <div>
+              <h4 className="small">
+                LED turns OFF: where the light decreased (Σ over {edges.n_fall} falling edges, window {edges.window_ms} ms)
+              </h4>
+              <DeltaImage
+                image={image}
+                delta={edges.fall}
+                span={`${edges.n_fall} falling-edge windows of ${edges.window_ms} ms`}
+                label="delta image summed over the falling edges"
+              />
+            </div>
+          </div>
+        </>
+      ) : (
+        <Notice tone="info" title="No edge images">
+          {props.preview.edge_images_reason ?? "The backend sent no edge images."}
+        </Notice>
+      )}
+
+      {lengthMs > 0 && (
+        <CustomWindow
+          key={recording_id}
+          experimentId={props.experimentId}
+          recordingId={recording_id}
+          image={image}
+          lengthMs={lengthMs}
+          start={firstRise ? firstRise.t0_us / 1000 : 0}
+          width={firstRise ? (firstRise.t1_us - firstRise.t0_us) / 1000 : Math.min(10, lengthMs)}
+        />
+      )}
+
       <div className="image-pair">
         <div>
-          <h3 className="h3">Delta image (saved recording, not live)</h3>
+          <h3 className="h3">Delta image, whole recording (saved recording, not live)</h3>
           <DeltaImage image={image} delta={delta} />
         </div>
         <div>
@@ -190,6 +258,89 @@ function DeltaReconstruction(props: { preview: RecordingPreview }) {
         </div>
       </div>
     </>
+  );
+}
+
+/** A delta image of any window: start + width in ms (slider and number inputs). The backend checks the range;
+ * a new request waits 300 ms after the last change and cancels the one before. */
+function CustomWindow(props: {
+  experimentId: string;
+  recordingId: string;
+  image: RecordingPreview["image"];
+  lengthMs: number;
+  start: number;
+  width: number;
+}) {
+  const { lengthMs } = props;
+  const round = (v: number) => Math.round(v * 1000) / 1000; // µs precision
+  const [width, setWidth] = useState(round(props.width));
+  const [start, setStart] = useState(round(props.start));
+  const [state, setState] = useState<{ data: WindowDelta | null; error: string | null; loading: boolean }>({
+    data: null,
+    error: null,
+    loading: true,
+  });
+  const w = Math.min(Math.max(width, 0.1), lengthMs);
+  const t0 = Math.min(Math.max(start, 0), round(lengthMs - w));
+  const t1 = Math.min(round(t0 + w), lengthMs);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setState((s) => ({ ...s, loading: true }));
+    const timer = setTimeout(() => {
+      getWindowDelta(props.experimentId, props.recordingId, t0, t1, ctrl.signal).then(
+        (data) => setState({ data, error: null, loading: false }),
+        (e) => {
+          if (isAbort(e)) return;
+          setState({ data: null, error: e instanceof ApiError ? e.message : String(e), loading: false });
+        },
+      );
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [props.experimentId, props.recordingId, t0, t1]);
+
+  const num = (e: React.ChangeEvent<HTMLInputElement>) => (Number.isFinite(e.target.valueAsNumber) ? e.target.valueAsNumber : 0);
+  return (
+    <div className="subcard">
+      <div className="subcard-head">
+        <strong className="small">Custom window (saved recording, not live)</strong>
+        {state.loading && <Spinner label="loading" />}
+      </div>
+      <div className="window-control small">
+        <input
+          type="range"
+          min={0}
+          max={round(lengthMs - w)}
+          step={0.1}
+          value={t0}
+          onChange={(e) => setStart(num(e))}
+          aria-label="window start in ms"
+        />
+        <label>
+          start ms
+          <input className="input mono" type="number" min={0} step={0.1} value={t0} onChange={(e) => setStart(num(e))} />
+        </label>
+        <label>
+          width ms
+          <input className="input mono" type="number" min={0.1} step={0.1} value={w} onChange={(e) => setWidth(num(e))} />
+        </label>
+        <span className="muted mono">
+          {t0}–{t1} ms of {round(lengthMs)} ms
+        </span>
+      </div>
+      {state.error && <Notice tone="error" title="Window not available">{state.error}</Notice>}
+      {state.data && (
+        <DeltaImage
+          image={props.image}
+          delta={state.data.delta_image}
+          span={`the window ${state.data.t0_ms}–${state.data.t1_ms} ms`}
+          label="delta image of the custom window"
+        />
+      )}
+    </div>
   );
 }
 

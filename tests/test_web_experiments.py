@@ -272,6 +272,27 @@ def test_recording_preview_only_for_the_experiments_own_recordings(fake_camera, 
     assert client.get(f"/api/experiments/{exp_id}/recordings/..%2Fx/preview").status_code == 404
 
 
+def test_custom_window_of_a_recording_checks_the_range(fake_camera, settings, tmp_path):
+    client = TestClient(create_app(settings, llm=HwLLM([hw("record"), "finish"], [[("record", {"seconds": 0.5})]]),
+                                   recordings_dir=tmp_path / "evcam"))
+    exp_id = start(client, "Record half a second.")
+    body = wait_for(client, exp_id, ended)
+    rid = next(e["data"]["result"]["recording_id"] for e in body["events"] if e["type"] == "tool.result")
+    url = f"/api/experiments/{exp_id}/recordings/{rid}/preview"
+
+    p = client.get(url).json()
+    assert ("edge_images" in p) != ("edge_images_reason" in p)  # one or the other, never both
+    w = client.get(url, params={"t0_ms": 10, "t1_ms": 25})
+    assert w.status_code == 200
+    assert w.json()["t0_ms"] == 10 and w.json()["delta_image"]["scale"].startswith("linear")
+    for params in ({"t0_ms": 20, "t1_ms": 20}, {"t0_ms": 30, "t1_ms": 10}, {"t0_ms": -1, "t1_ms": 10},
+                   {"t0_ms": 0, "t1_ms": 501}, {"t0_ms": 0, "t1_ms": "inf"}, {"t0_ms": 5}, {"t0_ms": "x", "t1_ms": 9}):
+        assert client.get(url, params=params).status_code == 422, params
+    other = "20261016-000000-abcdef"  # the window never opens another experiment's recording
+    assert client.get(f"/api/experiments/{exp_id}/recordings/{other}/preview",
+                      params={"t0_ms": 0, "t1_ms": 1}).status_code == 404
+
+
 def test_downloads_are_limited_to_the_run_files(fake_camera, settings):
     client = TestClient(create_app(settings, llm=HwLLM([hw("record"), "finish"], [[("record", {"seconds": 0.5})]])))
     exp_id = start(client, "Record half a second.")

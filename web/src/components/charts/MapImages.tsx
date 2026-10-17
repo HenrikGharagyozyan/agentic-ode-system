@@ -1,14 +1,16 @@
 // Two colour-map images of ONE saved recording, on the same 4 x 4 px bins as the event-count image (sensor
 // coordinates: x 0..1279 left to right, y 0..719 top to bottom). Hot pixels are already left out by the backend.
 // - DeltaImage: Σ polarity per bin (each ON = +Δ, each OFF = −Δ). Blue = darker, white = 0, red = brighter.
+//   `span` says over which time it is summed (the whole recording, the edge windows or a custom window).
 // - TimeImage: the mean time of the events in each bin. Blue = start, red = end of the recording, black = no events.
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
-import type { RecordingPreview } from "../../types";
+import type { RecordingPreview, SignedImage } from "../../types";
 import { bytes, cssColor } from "./EventImage";
 
 type Rgb = [number, number, number];
+const signed = (v: number) => (v > 0 ? `+${v}` : `${v}`);
 const mix = (a: Rgb, b: Rgb, f: number): Rgb => [0, 1, 2].map((c) => a[c] + (b[c] - a[c]) * f) as Rgb;
 
 /** A canvas of image.width x image.height bins; colour(i) colours bin i; describe(i) is the hover text. */
@@ -83,7 +85,12 @@ function Colourbar(props: { from: string; via?: string; to: string; left: string
   );
 }
 
-export function DeltaImage(props: { image: RecordingPreview["image"]; delta: NonNullable<RecordingPreview["delta_image"]> }) {
+export function DeltaImage(props: {
+  image: RecordingPreview["image"];
+  delta: SignedImage;
+  span?: string; // default "the whole recording"
+  label?: string;
+}) {
   const { image, delta } = props;
   const top = delta.scale_top;
   const codes = useMemo(() => new Int8Array(bytes(delta.data).buffer), [delta.data]); // signed: -127..127
@@ -103,12 +110,12 @@ export function DeltaImage(props: { image: RecordingPreview["image"]; delta: Non
       image={image}
       colour={colourOf}
       describe={describe}
-      label="delta image: sum of event polarity per bin"
+      label={props.label ?? "delta image: sum of event polarity per bin"}
       legend={<Colourbar from="--dl-neg" via="--dl-zero" to="--dl-pos" left={`−${t} Δ darker`} mid="0" right={`+${t} Δ brighter`} />}
       caption={
         <>
-          Reconstructed from events: each ON = +Δ, each OFF = −Δ, summed per {image.bin_px}×{image.bin_px} px bin over
-          the whole recording; linear scale, ±{t} Δ = full colour (range {delta.min} … +{delta.max} Δ); not an absolute
+          Reconstructed from events: each ON = +Δ, each OFF = −Δ, summed per {image.bin_px}×{image.bin_px} px bin over{" "}
+          {props.span ?? "the whole recording"}; linear scale, ±{t} Δ = full colour (range {signed(delta.min)} … {signed(delta.max)} Δ); not an absolute
           brightness · x 0–{image.sensor_width - 1} →, y 0–{image.sensor_height - 1} ↓ (sensor coordinates)
         </>
       }

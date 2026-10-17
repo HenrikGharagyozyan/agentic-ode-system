@@ -8,6 +8,8 @@ import pytest
 from agentic_ode.hardware.devices.evcam.analysis import (
     brightness_curve,
     delta_image,
+    edge_delta_images,
+    edge_windows,
     fundamental,
     hot_pixels,
     spectrum,
@@ -349,3 +351,63 @@ def test_time_image_is_the_mean_event_time_per_block():
 def test_image_bad_arguments(width, height, bin_px):
     with pytest.raises(ValueError, match="must be an int"):
         delta_image(make_events([], [], [], []), width, height, bin_px=bin_px)
+
+
+# ---- edge windows ----
+
+def region_square_wave(f_hz=50, seconds=0.2, seed=2):
+    """A 50 Hz light that hits only the region x 100..199, y 40..79 (one event per pixel per edge, 200 us jitter),
+    plus ON/OFF noise all over the sensor."""
+    rng = np.random.default_rng(seed)
+    xs, ys = np.meshgrid(np.arange(100, 200), np.arange(40, 80))
+    xs, ys = xs.ravel(), ys.ravel()
+    period = 1e6 / f_hz
+    x, y, p, t = [], [], [], []
+    for start in np.arange(0, seconds * 1e6, period):
+        for edge, pol in ((start + 4_000, 1), (start + 4_000 + period / 2, 0)):  # rise at 4 ms, fall at 14 ms
+            x.append(xs), y.append(ys), p.append(np.full(xs.size, pol))
+            t.append(edge + rng.integers(0, 200, xs.size))
+    n = 20_000
+    x.append(rng.integers(0, 1280, n)), y.append(rng.integers(0, 720, n)), p.append(rng.integers(0, 2, n))
+    t.append(rng.integers(0, int(seconds * 1e6), n))
+    t = np.concatenate(t)
+    keep = t < seconds * 1e6
+    return make_events(*(np.concatenate(a)[keep] for a in (x, y, p)), t[keep])
+
+
+def test_edge_windows_find_the_rise_and_the_fall_of_each_period():
+    w = edge_windows(region_square_wave(), 50.0)
+    assert [k for _, _, k in w] == ["rise", "fall"] * 5  # the first 5 full periods
+    for t0, t1, _ in w:
+        assert t1 - t0 == 5_000  # 1/4 of 20 ms
+    centres = [(t0 + t1) / 2 for t0, t1, _ in w]
+    assert all(abs(c - (4_100 + 10_000 * i)) < 200 for i, c in enumerate(centres))  # edges at 4 ms, 14 ms, ...
+    assert all(abs(b - a - 10_000) < 200 for a, b in zip(centres, centres[1:], strict=False))  # rise -> fall: 10 ms
+    assert len(edge_windows(region_square_wave(), 50.0, n_periods=2)) == 4
+
+
+def test_edge_delta_images_show_where_the_light_went_up_and_down():
+    img = edge_delta_images(region_square_wave(), 1280, 720, 50.0)
+    region = np.zeros((180, 320), dtype=bool)
+    region[10:20, 25:50] = True
+    # 16 pixels per bin, one event each per edge, 5 edges: +80 / -80 in the region; only a little noise outside
+    assert (img["rise"][region] >= 70).all() and (img["fall"][region] <= -70).all()
+    assert np.abs(img["rise"][~region]).max() <= 3 and np.abs(img["fall"][~region]).max() <= 3
+
+
+def test_no_f0_gives_no_windows_and_empty_images():
+    ev = region_square_wave()
+    assert edge_windows(ev, None) == []
+    img = edge_delta_images(ev, 1280, 720, None)
+    assert not img["rise"].any() and not img["fall"].any()
+
+
+def test_a_recording_shorter_than_one_period_gives_no_windows():
+    assert edge_windows(region_square_wave(seconds=0.2), 4.0) == []  # one period of 4 Hz = 0.25 s
+
+
+@pytest.mark.parametrize("kwargs, msg", [({"f0_hz": 0}, "f0_hz"), ({"f0_hz": math.inf}, "f0_hz"),
+                                         ({"f0_hz": 50, "n_periods": 0}, "n_periods")])
+def test_edge_windows_bad_arguments(kwargs, msg):
+    with pytest.raises(ValueError, match=msg):
+        edge_windows(square_wave(50, 0.1), **kwargs)

@@ -5,6 +5,8 @@ Reads runs/evcam/<id>.npz (git-ignored, so this runs on this machine) and writes
                         tau 0.2 s): the whole recording and the first 100 ms
   <id>_delta.png        Σ polarity per 4 x 4 px bin: blue = darker, white = 0, red = brighter (linear, symmetric)
   <id>_time.png         mean event time per 4 x 4 px bin: blue = start, red = end, black = no events
+  <id>_edges.png        "where did the light change": delta images summed over the rise windows | the fall windows
+                        of the first 5 periods (f0 from the offline spectrum, fmin 2 Hz), one colour scale
 
 The same functions and settings as the EventLab preview (agentic_ode/web/recordings.py), so the PNGs match the UI.
 
@@ -62,7 +64,7 @@ def delta(rid: str, hz: int, events: np.ndarray, seconds: float) -> None:
     ax.set_ylabel("y (sensor pixel)")
     ax.set_title(f"Delta image — {rid}, LED at {hz} Hz (saved recording, not live)\n"
                  f"each ON = +Δ, each OFF = −Δ per {recordings.BIN_PX}×{recordings.BIN_PX} px bin, "
-                 f"{seconds:.3f} s; range {img.min()} … +{img.max()} Δ; not an absolute brightness", fontsize=9)
+                 f"{seconds:.3f} s; range {img.min():+d} … {img.max():+d} Δ; not an absolute brightness", fontsize=9)
     fig.savefig(OUT / f"{rid}_delta.png", dpi=130)
     plt.close(fig)
 
@@ -84,13 +86,38 @@ def time(rid: str, hz: int, events: np.ndarray, seconds: float) -> None:
     plt.close(fig)
 
 
+def edges(rid: str, hz: int, events: np.ndarray, seconds: float) -> None:
+    f0 = analysis.spectrum(events, fmin_hz=recordings.SPECTRUM_FMIN_HZ)["fundamental_hz"]
+    windows = analysis.edge_windows(events, f0, recordings.EDGE_PERIODS, seconds=seconds)
+    img = analysis.edge_delta_images(events, limits.SENSOR_W, limits.SENSOR_H, f0, bin_px=recordings.BIN_PX,
+                                     seconds=seconds, windows=windows)
+    top = max(recordings._top(img["rise"], img["fall"]), 1.0)  # the same scale as the UI
+    cmap = LinearSegmentedColormap.from_list("delta", [BLUE, WHITE, RED])
+    window_ms = 1e3 / f0 / analysis.EDGE_WINDOW_PART
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.6), constrained_layout=True)
+    for ax, kind, title in ((axes[0], "rise", "LED turns ON: where the light increased"),
+                            (axes[1], "fall", "LED turns OFF: where the light decreased")):
+        n = sum(k == kind for _, _, k in windows)
+        im = ax.imshow(img[kind], cmap=cmap, vmin=-top, vmax=top, extent=EXTENT, interpolation="nearest")
+        edge = "rising" if kind == "rise" else "falling"
+        ax.set_title(f"{title}\nΣ over {n} {edge} edges, window {window_ms:.2f} ms;"
+                     f" range {img[kind].min():+d} … {img[kind].max():+d} Δ", fontsize=9)
+        ax.set_xlabel("x (sensor pixel)")
+        ax.set_ylabel("y (sensor pixel)")
+    fig.colorbar(im, ax=axes, shrink=0.85, label="Σ polarity (contrast steps Δ): blue darker, red brighter")
+    fig.suptitle(f"Edge-windowed delta images — {rid}, LED at {hz} Hz, f0 = {f0:g} Hz (offline spectrum); "
+                 "saved recording, not live; not an absolute brightness", fontsize=10)
+    fig.savefig(OUT / f"{rid}_edges.png", dpi=130)
+    plt.close(fig)
+
+
 def main() -> None:
     for rid, hz in RECORDINGS.items():
         events, meta = store.load(rid)
         seconds = float(meta["recorded_s"])
-        for make in (brightness, delta, time):
+        for make in (brightness, delta, time, edges):
             make(rid, hz, events, seconds)
-        print(f"{rid}: {OUT.relative_to(PROJECT_ROOT)}/{rid}_{{brightness,delta,time}}.png")
+        print(f"{rid}: {OUT.relative_to(PROJECT_ROOT)}/{rid}_{{brightness,delta,time,edges}}.png")
 
 
 if __name__ == "__main__":

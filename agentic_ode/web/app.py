@@ -9,7 +9,9 @@
 - GET  /api/experiments/{id}/events?after=N     Server-Sent Events: the events after seq N, then live until the end
 - POST /api/experiments/{id}/reply              the answer to the question that waits (request_id must match)
 - POST /api/experiments/{id}/cancel             stop the experiment (it stops at the next step)
-- GET  /api/experiments/{id}/recordings/{rid}/preview   image + rate of a recording THIS experiment saved (file only)
+- GET  /api/experiments/{id}/recordings/{rid}/preview   images, rate, brightness and edge images of a recording THIS
+                                                        experiment saved (file only); ?t0_ms=&t1_ms= instead gives the
+                                                        delta image of that window (422 if outside the recording)
 - GET  /api/experiments/{id}/download/{name}   transcript.md, transcript.json, experiment.json or events.jsonl
 - POST /api/dualvision/compare                  two saved lumen.flicker.v1 files -> comparison; read only, no camera
 
@@ -44,7 +46,7 @@ from agentic_ode.hardware.devices.evcam import store
 from agentic_ode.mcp.client import evcam_session
 from agentic_ode.web.dualvision_api import router as dualvision_router
 from agentic_ode.web.experiments import TERMINAL, ConflictError, ExperimentManager
-from agentic_ode.web.recordings import PreviewCache, recordings_of
+from agentic_ode.web.recordings import PreviewCache, WindowError, recordings_of, spectrum_f0_of
 
 SSE_POLL_S = 0.25  # how often the event stream looks for new events
 SSE_PING_S = 15.0  # a comment line now and then keeps proxies from closing a quiet stream
@@ -166,13 +168,22 @@ def create_app(settings: Settings | None = None, llm=None, recordings_dir: Path 
         return {"ok": True, "detail": "Cancel requested: the run stops after the current step."}
 
     @app.get("/api/experiments/{experiment_id}/recordings/{recording_id}/preview")
-    def recording_preview(experiment_id: str, recording_id: str) -> dict:
+    def recording_preview(experiment_id: str, recording_id: str, t0_ms: float | None = None,
+                          t1_ms: float | None = None) -> dict:
         """Only a recording that this experiment's own record calls returned: one experiment never shows another's
-        data. A plain def: a large real recording takes a moment to read."""
-        if recording_id not in recordings_of(found(experiment_id)["camera"]):
+        data. A plain def: a large real recording takes a moment to read.
+        t0_ms and t1_ms (both or neither): only the delta image of that custom window."""
+        camera = found(experiment_id)["camera"]
+        if recording_id not in recordings_of(camera):
             raise HTTPException(status_code=404, detail=f"This experiment made no recording {recording_id}.")
+        if (t0_ms is None) != (t1_ms is None):
+            raise HTTPException(status_code=422, detail="Give both t0_ms and t1_ms, or neither.")
         try:
-            return previews.get(recording_id)
+            if t0_ms is not None:
+                return previews.window(recording_id, t0_ms, t1_ms)
+            return previews.get(recording_id, spectrum_f0_of(camera, recording_id))
+        except WindowError as e:  # before ValueError: it is one
+            raise HTTPException(status_code=422, detail=str(e)) from None
         except (FileNotFoundError, ValueError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from None
 

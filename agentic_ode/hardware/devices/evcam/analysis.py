@@ -21,6 +21,8 @@ MIN_GOOD_SECONDS = 1.0  # spectrum() warns about shorter recordings (resolution 
 MAX_DIVISOR = 15  # _base_of_strongest() tests f_max / k for k = 2..15
 MAX_MULTIPLE = 9  # ... and the multiples n*f for n = 2..9
 MIN_MULTIPLES = 2  # ... of which at least 2 must be strong
+EDGE_STEP_PART = 16  # edge_windows(): a step is the change of the curve over 1/16 period (real edges take 1-2 ms)
+EDGE_WINDOW_PART = 4  # ... and each window is 1/4 period wide, centred on the edge
 
 
 def _check_seconds(seconds: float) -> float:
@@ -305,10 +307,14 @@ def delta_image(events: np.ndarray, width: int, height: int, t0_us: int | None =
         keep &= events["t"] >= t0_us
     if t1_us is not None:
         keep &= events["t"] < t1_us
-    ev = events[keep]
-    index, cols = _bin_index(ev, width, bin_px)
+    return _delta_sum(events[keep], width, height, bin_px)
+
+
+def _delta_sum(events: np.ndarray, width: int, height: int, bin_px: int) -> np.ndarray:
+    """Sum of the polarity (ON = +1, OFF = -1) per bin_px x bin_px block of ALL the given events."""
+    index, cols = _bin_index(events, width, bin_px)
     rows = -(-height // bin_px)
-    sign = np.where(ev["p"] == 1, 1, -1)
+    sign = np.where(events["p"] == 1, 1, -1)
     return np.bincount(index, weights=sign, minlength=rows * cols).astype(np.int64).reshape(rows, cols)
 
 
@@ -324,3 +330,73 @@ def time_image(events: np.ndarray, width: int, height: int, bin_px: int = 4,
     sums = np.bincount(index, weights=ev["t"] / 1e6, minlength=size)
     with np.errstate(invalid="ignore", divide="ignore"):  # 0 / 0 -> NaN = no events
         return (sums / counts).reshape(-1, cols)
+
+
+def edge_windows(events: np.ndarray, f0_hz: float | None, n_periods: int = 5, bin_us: int = 100,
+                 leak_tau_s: float | None = 0.2, seconds: float | None = None,
+                 curve: tuple[np.ndarray, np.ndarray] | None = None) -> list[tuple[int, int, str]]:
+    """Time windows around the edges of a blinking light: [(t0_us, t1_us, kind)], kind "rise" or "fall", by time.
+
+    A delta image over one FULL period sums to about 0 (the light goes up, then down), so the two edges are shown
+    separately. In each of the first n_periods full periods of 1/f0 (from t = 0), the rising edge is the largest
+    positive step of the brightness curve and the falling edge the largest negative step. A step is L[i+w] - L[i]
+    with w = 1/EDGE_STEP_PART period: this finds the edge without being fooled by one noisy bin. A sharp edge gives
+    the same step for several i, so the centre of the edge is the steepest single bin within that step.
+    Each window is 1/EDGE_WINDOW_PART period wide and centred on its edge.
+    An edge on the border of two periods can be found twice; the second, overlapping window is skipped.
+    f0_hz None (no spectrum peak): [] - the caller shows the whole recording instead.
+    curve: the (t_s, L) of brightness_curve() if it is already computed (it takes a moment for a large recording).
+    """
+    if f0_hz is None:
+        return []
+    if isinstance(f0_hz, bool) or not isinstance(f0_hz, (int, float)) or not 0 < f0_hz < float("inf"):
+        raise ValueError(f"f0_hz must be a positive number or None, got {f0_hz!r}")
+    if isinstance(n_periods, bool) or not isinstance(n_periods, int) or n_periods < 1:
+        raise ValueError(f"n_periods must be an int >= 1, got {n_periods!r}")
+    t_s, level = curve if curve is not None else brightness_curve(events, bin_us, leak_tau_s, seconds)
+    bin_us = round(float(t_s[0]) * 1e6)  # t_s[0] is the end of the first bin = the bin width
+    period = 1e6 / f0_hz / bin_us  # in bins (not a whole number)
+    w = max(1, round(period / EDGE_STEP_PART))
+    step = level[w:] - level[:-w]  # step[i]: the events of bins i+1 .. i+w
+    one = np.diff(level, prepend=0.0)  # one[j]: the change in bin j alone
+    half_us = 1e6 / f0_hz / EDGE_WINDOW_PART / 2
+    end_us = t_s.size * bin_us
+
+    windows: list[tuple[int, int, str]] = []
+    last = {"rise": -1, "fall": -1}  # the end (us) of the last window of each kind
+    for k in range(n_periods):
+        lo, hi = round(k * period), round((k + 1) * period)
+        if hi > step.size:
+            break  # not a full period any more
+        part = step[lo:hi]
+        for i, kind, ok in ((lo + int(np.argmax(part)), "rise", part.max() > 0),
+                            (lo + int(np.argmin(part)), "fall", part.min() < 0)):
+            inside = one[i + 1: i + w + 1]
+            j = i + 1 + int(np.argmax(inside) if kind == "rise" else np.argmin(inside))
+            centre_us = (j + 0.5) * bin_us  # the middle of the steepest bin
+            t0, t1 = max(0, round(centre_us - half_us)), min(end_us, round(centre_us + half_us))
+            if ok and t0 >= last[kind]:
+                windows.append((t0, t1, kind))
+                last[kind] = t1
+    return sorted(windows)
+
+
+def edge_delta_images(events: np.ndarray, width: int, height: int, f0_hz: float | None, bin_px: int = 4,
+                      n_periods: int = 5, seconds: float | None = None,
+                      windows: list[tuple[int, int, str]] | None = None) -> dict[str, np.ndarray]:
+    """{"rise": image, "fall": image}: delta_image() summed over all rise windows and over all fall windows of
+    edge_windows() (or of `windows`, if already computed). Summing over several periods averages out the noise.
+    Hot pixels are dropped over the whole recording, as in delta_image(). No windows: two images of zeros."""
+    _check_image_args(width, height, bin_px)
+    if windows is None:
+        windows = edge_windows(events, f0_hz, n_periods, seconds=seconds)
+    keep = _normal_pixels(events, seconds, width, height)
+    t = events["t"]
+    images = {}
+    for kind in ("rise", "fall"):
+        inside = np.zeros(events.size, dtype=bool)
+        for t0, t1, k in windows:
+            if k == kind:
+                inside |= (t >= t0) & (t < t1)
+        images[kind] = _delta_sum(events[keep & inside], width, height, bin_px)
+    return images

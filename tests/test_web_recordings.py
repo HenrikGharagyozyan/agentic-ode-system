@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 from agentic_ode.hardware.devices.evcam.events import EVENT_DTYPE
-from agentic_ode.web.recordings import preview, recordings_of
+from agentic_ode.web.recordings import WindowError, preview, recordings_of, spectrum_f0_of, window_preview
+from tests.test_evcam_analysis import region_square_wave
 
 
 def events(rows):
@@ -79,3 +80,52 @@ def test_new_plots_drop_hot_pixels_and_are_none_without_events():
     assert d[12, 12] == 0 and d[0, 0] < 0 and p["delta_image"]["max"] == 0
     empty = preview(events([]), {"recording_id": "r", "recorded_s": 1.0})
     assert empty["brightness_curve"] is None and empty["delta_image"] is None and empty["time_image"] is None
+
+
+def signed(block):
+    return np.frombuffer(base64.b64decode(block["data"]), dtype=np.int8).reshape(180, 320)
+
+
+def test_edge_images_of_a_50_hz_light_on_one_region():
+    p = preview(region_square_wave(), {"recording_id": "r", "recorded_s": 0.2})
+    e = p["edge_images"]
+    assert "edge_images_reason" not in p
+    assert e["f0_hz"] == pytest.approx(50, abs=e["resolution_hz"]) and e["window_ms"] == pytest.approx(5, abs=0.3)
+    assert e["n_rise"] == e["n_fall"] == e["n_periods"] == 5 and e["saved_f0_hz"] is None and e["f0_note"] is None
+    rise, fall = signed(e["rise"]), signed(e["fall"])
+    assert (rise[10:20, 25:50] > 0).all() and (fall[10:20, 25:50] < 0).all()
+    assert e["rise"]["scale_top"] == e["fall"]["scale_top"]  # one colour scale for both
+    assert [w["kind"] for w in p["edge_windows"]] == ["rise", "fall"] * 5
+
+
+def test_an_outdated_saved_f0_is_shown_with_a_note_but_not_used():
+    e = preview(region_square_wave(), {"recording_id": "r", "recorded_s": 0.2}, saved_f0_hz=70.363)["edge_images"]
+    assert e["saved_f0_hz"] == 70.363 and "outdated" in e["f0_note"]
+    assert e["f0_hz"] == pytest.approx(50, abs=e["resolution_hz"])
+
+
+def test_no_f0_gives_a_reason_and_no_edge_images():
+    rng = np.random.default_rng(3)  # only noise: no spectrum peak
+    rows = list(zip(rng.integers(0, 1280, 5000), rng.integers(0, 720, 5000), rng.integers(0, 2, 5000),
+                    rng.integers(0, 1_000_000, 5000), strict=True))
+    p = preview(events(rows), {"recording_id": "r", "recorded_s": 1.0})
+    assert "edge_images" not in p and p["edge_windows"] == []
+    assert p["edge_images_reason"].startswith("No flicker frequency") and p["delta_image"] is not None
+
+
+def test_window_preview_checks_the_range():
+    ev, meta = region_square_wave(), {"recording_id": "r", "recorded_s": 0.2}
+    w = window_preview(ev, meta, 1.5, 6.5)  # the first rising edge (4 ms)
+    assert w["t0_ms"] == 1.5 and w["t1_ms"] == 6.5 and (signed(w["delta_image"])[10:20, 25:50] > 0).all()
+    for t0, t1 in [(5, 5), (6, 2), (-1, 3), (0, 201), (float("nan"), 3), (0, float("inf"))]:
+        with pytest.raises(WindowError):
+            window_preview(ev, meta, t0, t1)
+
+
+def test_spectrum_f0_of_takes_the_last_good_spectrum_of_that_recording():
+    def rec(rid, f0, ok=True, tool="spectrum"):
+        return {"tool": tool, "ok": ok, "result_line": json.dumps({"recording_id": rid, "fundamental_hz": f0})}
+    records = [rec("a", 49.0), rec("b", 10.0), rec("a", 50.0), rec("a", 60.0, ok=False), rec("a", 70.0, tool="record"),
+               rec("a", None), {"tool": "spectrum", "ok": True, "result_line": "[1]"}]
+    assert spectrum_f0_of(records, "a") == 50.0 and spectrum_f0_of(records, "b") == 10.0
+    assert spectrum_f0_of(records, "c") is None

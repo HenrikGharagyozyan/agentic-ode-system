@@ -8,6 +8,7 @@ import type {
   ExperimentSummary,
   Health,
   RecordingPreview,
+  WindowDelta,
 } from "./types";
 
 export const API_BASE = "/api";
@@ -169,6 +170,18 @@ export function parseEvent(text: string): ExperimentEvent | null {
 function isPreview(v: unknown): v is RecordingPreview {
   return isObject(v) && typeof v.recording_id === "string" && isObject(v.image) && Array.isArray(v.hot_pixels);
 }
+
+function isWindowDelta(v: unknown): v is WindowDelta {
+  return isObject(v) && typeof v.t0_ms === "number" && typeof v.t1_ms === "number" && isObject(v.delta_image);
+}
+
+/** The delta image of the window t0_ms .. t1_ms of a saved recording (the backend checks the range). */
+export const getWindowDelta = (experimentId: string, recordingId: string, t0_ms: number, t1_ms: number, signal?: AbortSignal) =>
+  request(
+    `/experiments/${encodeURIComponent(experimentId)}/recordings/${encodeURIComponent(recordingId)}/preview?t0_ms=${t0_ms}&t1_ms=${t1_ms}`,
+    isWindowDelta,
+    { signal },
+  );
 
 /** Image and rate of a recording that this experiment saved (read from the file; never opens the camera). */
 export const getRecordingPreview = (experimentId: string, recordingId: string, signal?: AbortSignal) =>

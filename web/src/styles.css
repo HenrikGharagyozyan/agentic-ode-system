@@ -878,6 +878,40 @@ textarea:focus,
 .chart .dot-off {
   stroke: var(--off);
 }
+.chart .band-rise {
+  fill: var(--dl-pos);
+  opacity: 0.22;
+}
+.chart .band-fall {
+  fill: var(--dl-neg);
+  opacity: 0.3;
+}
+.legend-swatch.rise {
+  background: var(--dl-pos);
+  opacity: 0.5;
+}
+.legend-swatch.fall {
+  background: var(--dl-neg);
+  opacity: 0.6;
+}
+.window-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.window-control input[type="range"] {
+  flex: 1 1 220px;
+  accent-color: var(--accent);
+}
+.window-control label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.window-control .input {
+  width: 90px;
+}
 .chart .series.brightness {
   stroke: var(--accent-2);
 }

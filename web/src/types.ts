@@ -177,4 +177,35 @@ export interface RecordingPreview {
   } | null;
   delta_image?: { data: string; scale_top: number; min: number; max: number; scale: string } | null; // int8, signed
   time_image?: { data: string; seconds: number; scale: string } | null; // uint8: 0 = no events, 1..255 = start..end
+  // "where did the light change": delta images summed over the rise and the fall windows of the first periods
+  edge_images?: {
+    f0_hz: number;
+    f0_source: string;
+    saved_f0_hz: number | null;
+    f0_note: string | null; // set when a saved spectrum f0 differs (older analysis code)
+    resolution_hz: number;
+    window_ms: number;
+    n_periods: number;
+    n_rise: number;
+    n_fall: number;
+    rise: SignedImage;
+    fall: SignedImage;
+  };
+  edge_images_reason?: string; // instead of edge_images: why there are none (e.g. no flicker frequency)
+  edge_windows?: EdgeWindow[];
+}
+
+export type SignedImage = NonNullable<RecordingPreview["delta_image"]>;
+export interface EdgeWindow {
+  t0_us: number;
+  t1_us: number;
+  kind: "rise" | "fall";
+}
+
+/** GET .../preview?t0_ms=&t1_ms=: the delta image of one custom window of a saved recording. */
+export interface WindowDelta {
+  recording_id: string;
+  t0_ms: number;
+  t1_ms: number;
+  delta_image: SignedImage;
 }
