@@ -5,7 +5,15 @@ import math
 import numpy as np
 import pytest
 
-from agentic_ode.hardware.devices.evcam.analysis import fundamental, hot_pixels, spectrum, summary
+from agentic_ode.hardware.devices.evcam.analysis import (
+    brightness_curve,
+    delta_image,
+    fundamental,
+    hot_pixels,
+    spectrum,
+    summary,
+    time_image,
+)
 from agentic_ode.hardware.devices.evcam.events import EVENT_DTYPE
 
 
@@ -232,3 +240,112 @@ def test_spectrum_flat_signal_has_no_peak():
     # one ON and one OFF in the same bin: the signal is 0 everywhere
     s = spectrum(make_events([0, 0], [0, 0], [1, 0], [0, 0]), fmin_hz=0, fmax_hz=5000)
     assert s["dominant_hz"] is None and s["peaks"] == [] and s["harmonics"] == []
+
+
+# ---- delta reconstruction ----
+
+def square_wave(f_hz, seconds, n_pixels=200, on_per_edge=1, off_per_edge=1):
+    """Each of n_pixels sees a light that is bright in the first half of each period: on_per_edge ON events at each
+    rising edge, off_per_edge OFF events at each falling edge (10 us apart, no noise)."""
+    period = 1e6 / f_hz
+    rising = np.arange(0, seconds * 1e6, period)
+    px = np.arange(n_pixels)
+    rows = []
+    for p, edges, n in ((1, rising, on_per_edge), (0, rising + period / 2, off_per_edge)):
+        for k in range(n):
+            t = np.repeat(edges, n_pixels) + 10 * k
+            rows.append((np.tile(px, edges.size), p, t))
+    x = np.concatenate([r[0] for r in rows])
+    p = np.concatenate([np.full(r[0].size, r[1]) for r in rows])
+    t = np.concatenate([r[2] for r in rows]).astype(np.int64)
+    ok = t < seconds * 1e6
+    return make_events(x[ok], np.full(ok.sum(), 300), p[ok], t[ok])
+
+
+def test_brightness_curve_of_a_50_hz_square_wave():
+    t_s, level = brightness_curve(square_wave(50, 1.0))
+    assert t_s.size == level.size == 9901 and t_s[0] == 0.0001  # 100 us bins up to the last event; t = bin end
+    full = level[:9800]  # 49 full periods: 50 Hz falls exactly on an FFT bin
+    amp = np.abs(np.fft.rfft(full - full.mean()))
+    assert np.fft.rfftfreq(full.size, d=100e-6)[np.argmax(amp)] == pytest.approx(50.0)
+    # high in the first 10 ms of every 20 ms period, low in the second 10 ms: a step of 1 Δ per active pixel.
+    # The leak removes the mean within ~0.2 s, so later periods swing around 0 (about +0.5 / -0.5).
+    for k in range(49):
+        high = level[k * 200 + 10: k * 200 + 100].mean()
+        low = level[k * 200 + 110: k * 200 + 200].mean()
+        assert 0.9 < high - low < 1.1
+    assert level[:100].mean() > 0.95  # the first period starts from 0
+    assert level[9600:9700].mean() == pytest.approx(0.5, abs=0.05)  # the last full period: around 0
+    assert level[9700:9800].mean() == pytest.approx(-0.5, abs=0.05)
+
+
+def test_brightness_curve_of_constant_light_is_flat():
+    rng = np.random.default_rng(0)
+    n = 20_000  # only noise events, ON and OFF equally likely
+    ev = make_events(rng.integers(0, 1280, n), rng.integers(0, 720, n), rng.integers(0, 2, n),
+                     rng.integers(0, 1_000_000, n))
+    _, level = brightness_curve(ev)
+    assert np.abs(level).max() < 0.01  # 100 times smaller than one step of the square wave
+
+
+def test_the_leak_stops_the_drift_of_unequal_thresholds():
+    ev = square_wave(50, 1.0, on_per_edge=2, off_per_edge=1)  # each blink: +2 Δ, -1 Δ
+    _, plain = brightness_curve(ev, leak_tau_s=None)
+    _, leaky = brightness_curve(ev, leak_tau_s=0.2)
+    assert plain[-1] > 45  # +1 Δ per period, 50 periods: it drifts away
+    assert leaky.max() < 12  # it stays near a level: about 1 / (1 - exp(-20 ms / 0.2 s)) ~ 10.5
+
+
+def test_brightness_curve_drops_hot_pixels():
+    ev = square_wave(50, 1.0)
+    hot = make_events(np.full(30_000, 5), np.full(30_000, 5), np.ones(30_000), np.arange(30_000) * 30)  # 30 kHz
+    _, clean = brightness_curve(ev)
+    _, mixed = brightness_curve(np.concatenate([ev, hot]))
+    assert np.allclose(clean, mixed)
+
+
+@pytest.mark.parametrize("kwargs, msg", [({"bin_us": 0}, "bin_us"), ({"bin_us": 1.5}, "bin_us"),
+                                         ({"leak_tau_s": 0}, "leak_tau_s"), ({"leak_tau_s": True}, "leak_tau_s")])
+def test_brightness_curve_bad_arguments(kwargs, msg):
+    with pytest.raises(ValueError, match=msg):
+        brightness_curve(square_wave(50, 0.1), **kwargs)
+
+
+def test_brightness_curve_no_events():
+    with pytest.raises(ValueError, match="no events"):
+        brightness_curve(make_events([], [], [], []))
+
+
+def test_delta_image_is_positive_only_where_the_on_events_are():
+    rng = np.random.default_rng(1)
+    n = 5_000  # ON events only, in x 100..199, y 40..79
+    ev = make_events(rng.integers(100, 200, n), rng.integers(40, 80, n), np.ones(n), rng.integers(0, 1_000_000, n))
+    img = delta_image(ev, 1280, 720)
+    assert img.shape == (180, 320) and img.sum() == n
+    region = np.zeros_like(img, dtype=bool)
+    region[10:20, 25:50] = True  # the region in 4 x 4 bins
+    assert (img[region] > 0).all() and (img[~region] == 0).all()
+
+
+def test_delta_image_signs_time_window_and_hot_pixels():
+    # pixel (0, 0): ON at 10 us and 20 us; pixel (8, 4): OFF at 30 us; pixel (100, 100): 3 ON events
+    ev = make_events([0, 0, 8, 100, 100, 100], [0, 0, 4, 100, 100, 100], [1, 1, 0, 1, 1, 1], [10, 20, 30, 40, 50, 60])
+    # in 125 us the limit is 20 kHz * 125 us = 2.5 events: (100, 100) is hot, (0, 0) is not
+    img = delta_image(ev, 1280, 720, bin_px=4, seconds=125e-6)
+    assert img[0, 0] == 2 and img[1, 2] == -1 and img[25, 25] == 0
+    assert delta_image(ev, 1280, 720, t0_us=15, t1_us=30, seconds=125e-6)[0, 0] == 1  # only the event at 20 us
+    assert delta_image(ev, 1280, 720, bin_px=1, seconds=1.0)[100, 100] == 3  # not hot when the recording is 1 s
+
+
+def test_time_image_is_the_mean_event_time_per_block():
+    ev = make_events([0, 0, 40], [0, 0, 0], [1, 0, 1], [100_000, 300_000, 900_000])
+    img = time_image(ev, 1280, 720, seconds=1.0)
+    assert img.shape == (180, 320)
+    assert img[0, 0] == pytest.approx(0.2) and img[0, 10] == pytest.approx(0.9)
+    assert np.isnan(img[5, 5]) and np.count_nonzero(~np.isnan(img)) == 2
+
+
+@pytest.mark.parametrize("width, height, bin_px", [(0, 720, 4), (1280, 720, 0), (1280.0, 720, 4)])
+def test_image_bad_arguments(width, height, bin_px):
+    with pytest.raises(ValueError, match="must be an int"):
+        delta_image(make_events([], [], [], []), width, height, bin_px=bin_px)

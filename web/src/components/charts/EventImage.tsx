@@ -6,13 +6,13 @@ import { useEffect, useRef } from "react";
 
 import type { RecordingPreview } from "../../types";
 
-function cssColor(name: string): [number, number, number] {
+export function cssColor(name: string): [number, number, number] {
   const hex = getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace("#", "");
   const n = parseInt(hex.length === 3 ? hex.replace(/./g, "$&$&") : hex, 16);
   return Number.isNaN(n) ? [255, 255, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-const bytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+export const bytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
 export function EventImage(props: { preview: RecordingPreview }) {
   const { image, hot_pixels } = props.preview;

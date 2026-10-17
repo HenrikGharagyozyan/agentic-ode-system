@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { brightnessCsv } from "../src/csv.ts";
 import { reduce, type ExperimentView } from "../src/experimentReducer.ts";
 import { timelineItems } from "../src/timelineItems.ts";
 import { settingChange, toolFacts } from "../src/toolSummary.ts";
@@ -149,4 +150,9 @@ test("the report says when the operator refused a step or steered the model", as
   assert.ok(r.limitations.includes('The operator refused the proposed step "executor"; it did not run.'));
   assert.ok(r.limitations.some((l) => l.includes('free-text answer: "Use the spectrum tool instead."')));
   assert.ok(!r.limitations.some((l) => l.includes('free-text answer: "no"')));
+});
+
+test("brightnessCsv writes the header t_s,delta_L and one row per point", () => {
+  assert.equal(brightnessCsv([0.0004, 0.0008], [1, -0.25]), "t_s,delta_L\n0.0004,1\n0.0008,-0.25\n");
+  assert.equal(brightnessCsv([], []), "t_s,delta_L\n");
 });

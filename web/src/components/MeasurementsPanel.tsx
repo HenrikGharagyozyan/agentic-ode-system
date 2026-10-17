@@ -1,13 +1,17 @@
 // Measurements of the current experiment, from its real tool results only: the recordings (record), their spectra
-// (spectrum) and hot-pixel scans. The image and rate plot are read from the SAVED recording file.
+// (spectrum) and hot-pixel scans. The images, the rate plot and the brightness change (delta reconstruction) are
+// read from the SAVED recording file, for every recording of every experiment.
 
 import { useEffect, useState } from "react";
 
 import { ApiError, getRecordingPreview, isAbort } from "../api";
+import { brightnessCsv } from "../csv";
 import { clock } from "../format";
 import { type Measurement, measurements } from "../measurements";
 import type { CameraMode, ExperimentEvent, Json, RecordingPreview } from "../types";
+import { BrightnessPlot } from "./charts/BrightnessPlot";
 import { EventImage } from "./charts/EventImage";
+import { DeltaImage, TimeImage } from "./charts/MapImages";
 import { PeaksChart } from "./charts/PeaksChart";
 import { RatePlot } from "./charts/RatePlot";
 import { Badge, Notice, Panel, Spinner } from "./ui";
@@ -117,6 +121,7 @@ function RecordingBlock(props: { experimentId: string; m: Measurement; mode: Cam
           <EventImage preview={preview.data} />
           <h3 className="h3">Event rate</h3>
           {preview.data.rate ? <RatePlot rate={preview.data.rate} /> : <p className="small muted">No events: no rate.</p>}
+          <DeltaReconstruction preview={preview.data} />
           <p className="small muted">
             Settings at recording time: {preview.data.settings?.masked_pixels ?? "?"} masked pixel(s), ROI{" "}
             {preview.data.settings?.roi ? preview.data.settings.roi.join(", ") : "none"}, biases{" "}
@@ -140,6 +145,51 @@ function RecordingBlock(props: { experimentId: string; m: Measurement; mode: Cam
         <p className="small muted">Not measured: no spectrum was computed for this recording.</p>
       )}
     </div>
+  );
+}
+
+function DeltaReconstruction(props: { preview: RecordingPreview }) {
+  const { brightness_curve: curve, delta_image: delta, time_image: time, image, recording_id } = props.preview;
+  if (curve === undefined) return null; // an older backend: it does not send the delta reconstruction yet
+  if (!curve || !delta || !time) return <p className="small muted">No events: no brightness change, delta or time image.</p>;
+
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([brightnessCsv(curve.t_s, curve.delta_l)], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${recording_id}_brightness.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const zoomMs = Math.round(curve.zoom.t_s.length * curve.bin_s * 1000);
+
+  return (
+    <>
+      <div className="h3-row">
+        <h3 className="h3">Brightness change (integrated events, saved recording, not live)</h3>
+        <button type="button" className="btn btn-small" onClick={download}>
+          Download brightness CSV
+        </button>
+      </div>
+      <BrightnessPlot t={curve.t_s} v={curve.delta_l} label="brightness change over the whole recording" />
+      <h4 className="small">First {zoomMs} ms at full resolution ({curve.bin_s * 1e6} µs bins)</h4>
+      <BrightnessPlot t={curve.zoom.t_s} v={curve.zoom.delta_l} label={`brightness change, first ${zoomMs} ms`} />
+      <p className="small muted">
+        Reconstructed from events: each ON = +Δ, each OFF = −Δ; leaky integration τ = {curve.leak_tau_s} s; not an
+        absolute brightness. Mean change per active pixel; hot pixels left out. Full plot: {curve.step_s * 1000} ms
+        steps; the CSV holds these points (t_s, delta_L).
+      </p>
+      <div className="image-pair">
+        <div>
+          <h3 className="h3">Delta image (saved recording, not live)</h3>
+          <DeltaImage image={image} delta={delta} />
+        </div>
+        <div>
+          <h3 className="h3">Time-coloured event image (saved recording, not live)</h3>
+          <TimeImage image={image} time={time} />
+        </div>
+      </div>
+    </>
   );
 }
 

@@ -17,6 +17,11 @@
   --sim: #b48cf2; /* simulated data: violet, never confused with ok/warn/error */
   --on: #2f9cc2; /* ON events (validated with the dataviz palette checks on --panel, dark) */
   --off: #d66d3c; /* OFF events */
+  --dl-neg: #2166ac; /* delta image: darker (blue) */
+  --dl-zero: #ffffff; /* delta image: no change (white) */
+  --dl-pos: #b2182b; /* delta image: brighter (red) */
+  --time-start: #2166ac; /* time image: start of the recording (blue) */
+  --time-end: #b2182b; /* time image: end of the recording (red) */
   --radius: 6px;
   --gap: 16px;
   --font: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -730,6 +735,42 @@ textarea:focus,
   display: grid;
   gap: 10px;
 }
+.recording h4 {
+  margin: 0;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.h3-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.image-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.image-pair > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.colourbar {
+  display: grid;
+  gap: 2px;
+}
+.colourbar-ramp {
+  height: 8px;
+  border-radius: 2px;
+}
+.colourbar-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
 .rec-title {
   display: grid;
   gap: 2px;
@@ -802,6 +843,10 @@ textarea:focus,
 .legend-swatch.off {
   background: var(--off);
 }
+.legend-swatch.none {
+  background: #000;
+  border: 1px solid var(--border-strong);
+}
 .chart {
   width: 100%;
   height: auto;
@@ -832,6 +877,14 @@ textarea:focus,
 .chart .series.off,
 .chart .dot-off {
   stroke: var(--off);
+}
+.chart .series.brightness {
+  stroke: var(--accent-2);
+}
+.chart .dot-brightness {
+  fill: var(--accent-2);
+  stroke: var(--panel);
+  stroke-width: 2;
 }
 .chart .dot-on {
   fill: var(--on);

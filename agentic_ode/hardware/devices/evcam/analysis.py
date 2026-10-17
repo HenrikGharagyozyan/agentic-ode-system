@@ -1,10 +1,14 @@
-"""Analysis of recorded events: counts per pixel, hot pixels and the flicker spectrum. Pure numpy, no hardware.
+"""Analysis of recorded events: counts per pixel, hot pixels, the flicker spectrum and the delta reconstruction.
+Pure numpy, no hardware.
 
-Every function returns plain Python numbers, lists and dicts, so a result can be sent as JSON (for the MCP tools).
+The MCP functions (summary, hot_pixels, spectrum) return plain Python numbers, lists and dicts, so a result can be
+sent as JSON. The plot functions (brightness_curve, delta_image, time_image) return numpy arrays.
 Events are the structured array from EventCamera.record(): fields x, y, p (1 = ON, 0 = OFF), t (us, from 0).
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 
@@ -216,3 +220,107 @@ def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmi
         result["harmonics"].append({"k": k, "hz": round(float(freq[j]), 3), "rel_amp": round(float(amp[j] / top), 3),
                                     "snr": snr(j)})
     return result
+
+
+# ---- delta reconstruction ----
+# Each event means: the log brightness of one pixel changed by one contrast step Δ (ON = +Δ, OFF = -Δ). Summing the
+# events gives the brightness change. Δ is not known in absolute units, so every result is "in units of Δ".
+
+
+def _normal_pixels(events: np.ndarray, seconds: float | None, width: int, height: int) -> np.ndarray:
+    """True for the events of normal pixels, False for hot pixels (>= MAX_PIXEL_RATE_HZ, the hot_pixels() rule).
+
+    Masked pixels have no events, so they never appear. This also cleans recordings made before the mask was set.
+    seconds: the recording length; None = the span of the event times.
+    """
+    if events.size == 0:
+        return np.zeros(0, dtype=bool)
+    if seconds is None:
+        seconds = (int(events["t"].max()) - int(events["t"].min()) + 1) / 1e6
+    seconds = _check_seconds(seconds)
+    index = events["y"].astype(np.int64) * width + events["x"]
+    counts = np.bincount(index, minlength=width * height)
+    return counts[index] < limits.MAX_PIXEL_RATE_HZ * seconds
+
+
+def _check_image_args(width: int, height: int, bin_px: int) -> None:
+    for name, v in (("width", width), ("height", height), ("bin_px", bin_px)):
+        if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+            raise ValueError(f"{name} must be an int >= 1, got {v!r}")
+
+
+def _bin_index(events: np.ndarray, width: int, bin_px: int) -> tuple[np.ndarray, int]:
+    """The image bin of each event (row by row from y = 0) and the number of bin columns."""
+    cols = -(-width // bin_px)  # ceil division: a last, partial column of bins
+    return (events["y"].astype(np.int64) // bin_px) * cols + events["x"].astype(np.int64) // bin_px, cols
+
+
+def brightness_curve(events: np.ndarray, bin_us: int = 100, leak_tau_s: float | None = 0.2,
+                     seconds: float | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """The brightness change of the whole sensor over time, in units of Δ: (t_s, L).
+
+    net[i] = (#ON - #OFF in bin i) / number of active pixels, so L is the mean change per active pixel (hot pixels
+    dropped, see _normal_pixels). L is the leaky integral of net:  L[i] = a * L[i-1] + net[i],  a = exp(-bin / tau).
+    The leak makes old steps fade with time constant leak_tau_s. Without it, L drifts away, because the ON and OFF
+    thresholds are never exactly equal. leak_tau_s=None: the plain sum (a = 1).
+    t_s[i] is the END of bin i (L[i] includes all events up to there). seconds: see _normal_pixels.
+    """
+    if events.size == 0:
+        raise ValueError("no events: nothing to integrate")
+    if isinstance(bin_us, bool) or not isinstance(bin_us, int) or bin_us < 1:
+        raise ValueError(f"bin_us must be an int >= 1, got {bin_us!r}")
+    if leak_tau_s is not None and (isinstance(leak_tau_s, bool) or not isinstance(leak_tau_s, (int, float))
+                                   or not 0 < leak_tau_s < float("inf")):
+        raise ValueError(f"leak_tau_s must be a positive number or None, got {leak_tau_s!r}")
+    t = events["t"]
+    if t.min() < 0:
+        raise ValueError("event times must be >= 0 (record() gives t from 0)")
+
+    n_bins = int(t.max()) // bin_us + 1  # from ALL events, so the time axis covers the whole recording
+    keep = _normal_pixels(events, seconds, limits.SENSOR_W, limits.SENSOR_H)
+    ev = events[keep]
+    active = np.unique(ev["y"].astype(np.int64) * limits.SENSOR_W + ev["x"]).size
+    sign = np.where(ev["p"] == 1, 1.0, -1.0)
+    net = np.bincount(ev["t"] // bin_us, weights=sign, minlength=n_bins) / max(active, 1)
+
+    a = 1.0 if leak_tau_s is None else math.exp(-bin_us * 1e-6 / leak_tau_s)
+    level = np.empty(n_bins)
+    value = 0.0
+    for i, step in enumerate(net.tolist()):
+        value = a * value + step
+        level[i] = value
+    t_s = np.arange(1, n_bins + 1) * bin_us / 1e6
+    return t_s, level
+
+
+def delta_image(events: np.ndarray, width: int, height: int, t0_us: int | None = None, t1_us: int | None = None,
+                bin_px: int = 4, seconds: float | None = None) -> np.ndarray:
+    """Sum of the polarity (ON = +1, OFF = -1) per bin_px x bin_px block, in units of Δ, for t0_us <= t < t1_us
+    (None = no limit). Shape (ceil(height / bin_px), ceil(width / bin_px)); row 0 is y = 0 (the top of the sensor).
+    > 0: the block got brighter, < 0: darker. Hot pixels are dropped over the WHOLE recording (see _normal_pixels).
+    """
+    _check_image_args(width, height, bin_px)
+    keep = _normal_pixels(events, seconds, width, height)
+    if t0_us is not None:
+        keep &= events["t"] >= t0_us
+    if t1_us is not None:
+        keep &= events["t"] < t1_us
+    ev = events[keep]
+    index, cols = _bin_index(ev, width, bin_px)
+    rows = -(-height // bin_px)
+    sign = np.where(ev["p"] == 1, 1, -1)
+    return np.bincount(index, weights=sign, minlength=rows * cols).astype(np.int64).reshape(rows, cols)
+
+
+def time_image(events: np.ndarray, width: int, height: int, bin_px: int = 4,
+               seconds: float | None = None) -> np.ndarray:
+    """The mean time (s) of the events in each bin_px x bin_px block; NaN for a block without events.
+    Same shape and hot-pixel rule as delta_image(). Early blocks are small numbers, late blocks large ones."""
+    _check_image_args(width, height, bin_px)
+    ev = events[_normal_pixels(events, seconds, width, height)]
+    index, cols = _bin_index(ev, width, bin_px)
+    size = -(-height // bin_px) * cols
+    counts = np.bincount(index, minlength=size)
+    sums = np.bincount(index, weights=ev["t"] / 1e6, minlength=size)
+    with np.errstate(invalid="ignore", divide="ignore"):  # 0 / 0 -> NaN = no events
+        return (sums / counts).reshape(-1, cols)

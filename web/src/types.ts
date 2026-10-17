@@ -164,4 +164,17 @@ export interface RecordingPreview {
   };
   rate: { bin_s: number; on_hz: number[]; off_hz: number[] } | null;
   hot_pixels: { x: number; y: number; count: number; rate_hz: number }[];
+  // delta reconstruction, in units of Δ (contrast steps); null when the recording has no events. Absent from an
+  // older backend, so the panel checks them before use.
+  brightness_curve?: {
+    bin_s: number;
+    step_s: number;
+    leak_tau_s: number;
+    unit: string;
+    t_s: number[];
+    delta_l: number[];
+    zoom: { t_s: number[]; delta_l: number[] };
+  } | null;
+  delta_image?: { data: string; scale_top: number; min: number; max: number; scale: string } | null; // int8, signed
+  time_image?: { data: string; seconds: number; scale: string } | null; // uint8: 0 = no events, 1..255 = start..end
 }
