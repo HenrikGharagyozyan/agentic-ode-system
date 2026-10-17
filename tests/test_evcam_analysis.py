@@ -278,6 +278,57 @@ def test_base_of_strongest_finds_a_true_low_base():
     assert base_of(line_spectrum(lines)) == (12.0, [])
 
 
+# ---- one base for all the lines (real 50 Hz LED, 2026-10-17: a 50.28 Hz carrier with 10.26 Hz sidebands) ----
+
+def sideband_spectrum(fc, fm, resolution, n_carrier=8):
+    """Like the real 50 Hz recording: the harmonics m*fc (3fc strongest), a sideband m*fc +- fm next to each of them,
+    and the slow flicker fm, 2fm. The lines come every ~fm Hz, but they are not multiples of one base."""
+    lines = {fm: 40, 2 * fm: 40}
+    for m in range(1, n_carrier + 1):
+        lines[m * fc] = 100 if m == 3 else 90
+        lines[m * fc - fm] = lines[m * fc + fm] = 60
+    return line_spectrum(lines, resolution)
+
+
+@pytest.mark.parametrize("fc, fm, resolution", [(50.28, 10.26, 0.5131), (50.3, 10.3, 0.5), (40.4, 8.3, 1 / 2.3)])
+def test_base_of_strongest_sidebands_are_not_one_base(fc, fm, resolution):
+    # 3fc / 15 has a line (the flicker fm) and strong "multiples" (the sidebands), so it was reported (10.262 Hz for
+    # the real values). But no single base f puts n*f within half a bin of all these lines -> unresolved, and the
+    # low base is still listed, not silently dropped
+    f0, candidates = base_of(sideband_spectrum(fc, fm, resolution), resolution)
+    assert f0 is None
+    assert any(abs(c - 3 * fc / 15) <= resolution for c in candidates)
+    assert any(abs(c - fc) <= resolution for c in candidates)
+
+
+@pytest.mark.parametrize("f, resolution", [(10.3, 0.5), (13.7, 1 / 1.7), (7.9, 0.4)])
+def test_base_of_strongest_genuine_comb_between_bins(f, resolution):
+    # the base lies between two bins, so every n*f lies between bins too, but each line is still within half a bin
+    # of n*f for one common f: the base is found (5f is the strongest line)
+    lines = {f * n: 50 for n in range(1, 30, 2)}
+    lines[5 * f] = 60
+    f0, candidates = base_of(line_spectrum(lines, resolution), resolution)
+    assert candidates == [] and abs(f0 - f) <= resolution / 2
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_spectrum_genuine_13_7hz_in_a_1_7s_recording(seed):
+    # another frequency and resolution (1 / 1.7 s): 7f is the strongest peak, the base is between bins
+    s = spectrum(blinking_light(13.7, 1.7, np.random.default_rng(seed), events_per_edge=200, jitter_us=300),
+                 fmin_hz=2, fmax_hz=2000)
+    assert abs(s["fundamental_hz"] - 13.7) <= s["resolution_hz"]
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_spectrum_40hz_with_8hz_modulation_is_never_8hz(seed):
+    s = spectrum(modulated_light(40.4, 8.3, 0.6, 2.3, np.random.default_rng(seed)), fmin_hz=2, fmax_hz=2000)
+    f0 = s["fundamental_hz"]
+    assert f0 is None or abs(f0 - 40.4) <= s["resolution_hz"]
+    if f0 is None:
+        assert s["harmonics"] == [] and "unresolved" in s["warning"]
+    assert len(s["peaks"]) == 5 and s["peaks"][0]["hz"] == s["dominant_hz"]
+
+
 def test_spectrum_two_unrelated_families_stay_unresolved():
     # 60 Hz (1/4 on) and 40 Hz (1/6 on): both have 120 Hz as their strongest harmonic. 60 and 40 Hz both explain
     # it, and 20 Hz has no line: no single fundamental

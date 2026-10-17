@@ -21,6 +21,8 @@ MIN_GOOD_SECONDS = 1.0  # spectrum() warns about shorter recordings (resolution 
 MAX_DIVISOR = 15  # _base_of_strongest() tests f_max / k for k = 2..15
 MAX_MULTIPLE = 9  # ... and the multiples n*f for n = 2..9
 MIN_MULTIPLES = 2  # ... of which at least 2 must be strong (not counting the harmonics of f_max itself)
+CONSISTENT_BINS = 0.5  # ... and n*f must be within 1/2 bin of each of these lines, for one common f (the nearest bin
+#                        is within 1/2 bin of a sharp line; leakage and noise can move a weak line further)
 EDGE_STEP_PART = 16  # edge_windows(): a step is the change of the curve over 1/16 period (real edges take 1-2 ms)
 EDGE_WINDOW_PART = 4  # ... and each window is 1/4 period wide, centred on the edge
 
@@ -103,8 +105,13 @@ def _base_of_strongest(amp: np.ndarray, resolution: float, strongest: int, floor
     1. candidates: f_max, and f = f_max / k (k = 2..MAX_DIVISOR, only f >= fmin_hz) if the spectrum at f is strong
        (snr >= min_snr, +-1 bin) and at least MIN_MULTIPLES of n*f (n = 2..MAX_MULTIPLE, up to fmax_hz) are strong.
        Only n that are not multiples of k count: n*f = (n/k)*f_max is then a harmonic of f_max, no evidence for f.
-    2. a candidate f is proven if, for every candidate g = m*f above it, the strong lines that only f explains
-       (n*f with n not a multiple of m) are together at least as strong as the lines that g explains too.
+    2. a candidate f is proven if one base explains all its lines, and, for every candidate g = m*f above it, the
+       strong lines that only f explains (n*f with n not a multiple of m) are together at least as strong as the
+       lines that g explains too. One base: a line at bin j is n*f to +-CONSISTENT_BINS bins, so f is in
+       [(j - CONSISTENT_BINS) / n, (j + CONSISTENT_BINS) / n] bins, and these intervals of f_max (n = k), of the
+       line at f (n = 1) and of the strong multiples from 1. must overlap. Sidebands do not: the real 50 Hz LED
+       (2026-10-17) had lines at 20.5 and 29.8 Hz, and 150.8 Hz = 15f needs f = 10.04..10.07 Hz, but 20.5 Hz = 2f
+       needs f >= 10.13 Hz and 29.8 Hz = 3f needs f <= 10.01 Hz.
     3. a candidate that is not proven, or proven ones that are not all multiples of the lowest -> unresolved.
     Returns (f0, []) with f0 the frequency of the strongest bin near the lowest proven f, (None, []) if f_max is
     the only candidate, or (None, all candidates in Hz) if unresolved.
@@ -117,26 +124,34 @@ def _base_of_strongest(amp: np.ndarray, resolution: float, strongest: int, floor
         j = lo + int(np.argmax(amp[lo: c + w + 1]))
         return j if amp[j] > 0 and amp[j] >= min_snr * floor else None
 
-    # 1. the candidates, k -> f_max / k
+    def one_base(lines):  # lines = [(n, bin j)]: True if one f is within CONSISTENT_BINS / n bins of j / n for all
+        return (max((j - CONSISTENT_BINS) / n for n, j in lines)
+                <= min((j + CONSISTENT_BINS) / n for n, j in lines))
+
+    # 1. the candidates, k -> f_max / k, and the lines they were found from, k -> [(n, bin)]
     f_max = strongest * resolution
     candidates = {1: f_max}
+    found_from = {}
     for k in range(2, MAX_DIVISOR + 1):
         f = f_max / k
         if f < fmin_hz:
             break  # k grows, so f only gets lower
-        if strong_bin(f) is None:
+        j = strong_bin(f)
+        if j is None:
             continue
-        own = [n * f for n in range(2, MAX_MULTIPLE + 1) if n % k and n * f <= fmax_hz]
-        if sum(strong_bin(m) is not None for m in own) >= MIN_MULTIPLES:
+        own = [(n, strong_bin(n * f)) for n in range(2, MAX_MULTIPLE + 1) if n % k and n * f <= fmax_hz]
+        own = [(n, i) for n, i in own if i is not None]
+        if len(own) >= MIN_MULTIPLES:
             candidates[k] = f
+            found_from[k] = [(1, j), (k, strongest)] + own
     if len(candidates) == 1:
         return None, []
 
     # 2. which candidates are proven; f_max has no candidate above it, so it is proven
     proven = [1]
     for k, f in candidates.items():
-        if k == 1:
-            continue
+        if k == 1 or not one_base(found_from[k]):
+            continue  # not one base: not proven, so step 3 keeps it as unresolved
         # the strong lines at n*f, n >= 1: f = f_max / k is known to +-resolution/(2k), so n*f to +-n/(2k) bins
         lines = {}
         for n in range(1, int(fmax_hz / f) + 1):
