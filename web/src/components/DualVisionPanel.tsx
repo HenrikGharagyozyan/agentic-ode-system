@@ -62,7 +62,7 @@ function earlyStopText(a: LabAssessment["acquisition"]): string {
 
 function f0Text(s: LabAssessment): string {
   if (s.f0_status === "measured") return measured(s.f0_hz, "Hz", 6);
-  if (s.f0_status === "not_detected") return "Not detected (no flicker found)";
+  if (s.f0_status === "not_detected") return "Fundamental unresolved (f0 unavailable)";
   return "Not measured (invalid value)";
 }
 
