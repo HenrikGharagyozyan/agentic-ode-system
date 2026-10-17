@@ -11,6 +11,7 @@
 - POST /api/experiments/{id}/cancel             stop the experiment (it stops at the next step)
 - GET  /api/experiments/{id}/recordings/{rid}/preview   image + rate of a recording THIS experiment saved (file only)
 - GET  /api/experiments/{id}/download/{name}   transcript.md, transcript.json, experiment.json or events.jsonl
+- POST /api/dualvision/compare                  two saved lumen.flicker.v1 files -> comparison; read only, no camera
 
 Rules:
 - The camera is never opened by itself: not at start, not by /status, never by a timer.
@@ -41,6 +42,7 @@ from agentic_ode import __version__
 from agentic_ode.core.config import Settings
 from agentic_ode.hardware.devices.evcam import store
 from agentic_ode.mcp.client import evcam_session
+from agentic_ode.web.dualvision_api import router as dualvision_router
 from agentic_ode.web.experiments import TERMINAL, ConflictError, ExperimentManager
 from agentic_ode.web.recordings import PreviewCache, recordings_of
 
@@ -66,6 +68,7 @@ def create_app(settings: Settings | None = None, llm=None, recordings_dir: Path 
     recordings_dir: where the MCP server saves recordings (default runs/evcam/, the server's own default)."""
     settings = settings or Settings.from_env()
     app = FastAPI(title="EventLab", version=__version__)
+    app.include_router(dualvision_router)  # offline comparison of two saved files: no camera, no lock
     mode = "simulated" if os.environ.get("EVCAM_FAKE") == "1" else "real"
     camera_lock = threading.Lock()
     experiments = ExperimentManager(settings, camera_lock, mode, llm)

@@ -137,7 +137,8 @@ def test_frame_with_sufficient_measured_fps():
     a = assess(frame_record(), "frame")
     assert a["eligibility"] == "valid" and a["reasons"] == []
     assert a["acquisition"]["nyquist_hz"] == 100.0
-    assert a["warnings"] == [{"text": frame_record()["warnings"][0], "significant": False}]  # kept, not hidden
+    assert a["warnings"] == [{"code": "ALIASING_NOT_EXCLUDED", "text": frame_record()["warnings"][0],
+                              "significant": False}]  # kept, not hidden
 
 
 @pytest.mark.parametrize("fps", [100.0, 80.0, 30.0])  # Nyquist 50 (equal), 40 and 15 Hz
@@ -199,7 +200,140 @@ def test_harmonic_ambiguity_warning_is_significant():
                                   "aliasing_not_excluded"])
 def test_other_and_unknown_frame_warnings_are_significant(text):
     a = assess(frame_record(warnings=[text]), "frame")
-    assert a["warnings"] == [{"text": text, "significant": True}] and a["eligibility"] == "provisional"
+    code = text.split(":")[0] if text[0].isupper() else None  # "aliasing_not_excluded" is not a code
+    assert a["warnings"] == [{"code": code, "text": text, "significant": True}] and a["eligibility"] == "provisional"
+
+
+# ---- structured warnings (DV-H03): {"code", "message"} objects of the Frame Lab, alone or mixed with strings ----
+
+def warning(code, message="explanation"):
+    return {"code": code, "message": message}
+
+
+def test_event_string_warnings_keep_text_and_get_no_invented_code():
+    texts = ["stopped early: the 30000000 event cap was reached after 0.325 s of 2.0 s (light too bright)",
+             "the recording is only 0.33 s long: the frequency resolution is 3.1 Hz"]
+    a = assess(event_record(warnings=texts), "event")
+    assert a["warnings"] == [{"code": None, "text": t, "significant": True} for t in texts]
+    assert a["problems"] == [] and a["reasons"] == ["SIGNIFICANT_WARNING"]
+
+
+def test_structured_frame_warning_is_accepted():
+    a = assess(frame_record(warnings=[warning("ALIASING_NOT_EXCLUDED", "one frame rate cannot exclude it")]), "frame")
+    assert a["problems"] == [] and a["eligibility"] == "valid"  # below Nyquist (50 < 100): informational
+    assert a["warnings"] == [{"code": "ALIASING_NOT_EXCLUDED", "text": "one frame rate cannot exclude it",
+                              "significant": False}]
+
+
+@pytest.mark.parametrize("fps", [100.0, 30.0, None])  # Nyquist 50 (equal), 15 Hz, unknown
+def test_structured_aliasing_at_or_above_or_unknown_nyquist_is_significant(fps):
+    a = assess(frame_record(warnings=[warning("ALIASING_NOT_EXCLUDED")], **{"acquisition.fps": fps}), "frame")
+    assert a["problems"] == [] and a["warnings"][0]["significant"] is True
+    assert a["eligibility"] in ("provisional", "not_recoverable") and "SIGNIFICANT_WARNING" in a["reasons"]
+
+
+def test_structured_aliasing_with_invalid_fps_is_significant():
+    a = assess(frame_record(warnings=[warning("ALIASING_NOT_EXCLUDED")], **{"acquisition.fps": math.nan}), "frame")
+    assert a["eligibility"] == "invalid" and a["warnings"][0]["significant"] is True
+
+
+@pytest.mark.parametrize("code", ["HARMONIC_AMBIGUITY", "DEVICE_TICK_UNVERIFIED", "HOST_TIMESTAMPS", "DROPPED_FRAMES",
+                                  "TIMING_JITTER", "SOMETHING_NEW", "aliasing_not_excluded", "ALIASING_NOT_EXCLUDED "])
+def test_other_and_unknown_structured_frame_warnings_are_significant(code):
+    a = assess(frame_record(warnings=[warning(code, "why")]), "frame")
+    assert a["problems"] == [] and a["warnings"] == [{"code": code, "text": "why", "significant": True}]
+    assert a["eligibility"] == "provisional" and a["reasons"] == ["SIGNIFICANT_WARNING"]
+    assert a["f0_hz"] == 50.2  # never replaced by reference_hz
+
+
+def test_structured_warning_in_an_event_record_is_significant():
+    a = assess(event_record(warnings=[warning("ALIASING_NOT_EXCLUDED")]), "event")
+    assert a["problems"] == [] and a["warnings"][0]["significant"] is True and a["eligibility"] == "provisional"
+
+
+def test_mixed_warning_list_keeps_order_and_meaning():
+    items = ["ALIASING_NOT_EXCLUDED: a single frame rate cannot exclude aliasing", warning("HOST_TIMESTAMPS", "host"),
+             "frames were late", warning("ALIASING_NOT_EXCLUDED", "again")]
+    a = assess(frame_record(warnings=items), "frame")
+    assert a["problems"] == [] and a["warnings"] == [
+        {"code": "ALIASING_NOT_EXCLUDED", "text": items[0], "significant": False},
+        {"code": "HOST_TIMESTAMPS", "text": "host", "significant": True},
+        {"code": None, "text": "frames were late", "significant": True},
+        {"code": "ALIASING_NOT_EXCLUDED", "text": "again", "significant": False},
+    ]
+    assert a["eligibility"] == "provisional" and a["reasons"] == ["SIGNIFICANT_WARNING"]
+
+
+def test_early_stop_stays_provisional_whatever_the_warning_format():
+    a = assess(frame_record(warnings=[warning("ALIASING_NOT_EXCLUDED")], **{"acquisition.early_stop": True}), "frame")
+    assert a["eligibility"] == "provisional" and a["reasons"] == ["EARLY_STOP"]
+    a = assess(event_record(warnings=[warning("EARLY_STOP", "event cap")], **{"acquisition.early_stop": True}), "event")
+    assert a["reasons"] == ["EARLY_STOP", "SIGNIFICANT_WARNING"]
+
+
+LEAK = "LEAK-MARKER-1234"
+
+
+@pytest.mark.parametrize("bad", [
+    {}, {"code": "DROPPED_FRAMES"}, {"message": "m"},                             # missing code or message
+    {"code": "DROPPED_FRAMES", "message": "m", "extra": LEAK},                    # unexpected key
+    {"code": "DROPPED_FRAMES", "message": "m", "severity": "high"},
+    {"code": 1, "message": "m"}, {"code": None, "message": "m"}, {"code": True, "message": "m"},  # non-string
+    {"code": "DROPPED_FRAMES", "message": 2}, {"code": "DROPPED_FRAMES", "message": [LEAK]},
+    {"code": "", "message": "m"}, {"code": "DROPPED_FRAMES", "message": "  "},   # empty
+    42, None, True, ["DROPPED_FRAMES", "m"],                                      # not a string or an object
+])
+def test_malformed_warning_item_is_invalid(bad):
+    good = warning("ALIASING_NOT_EXCLUDED")
+    r = paired(frame=frame_record(warnings=[good, bad]))
+    f = r["frame"]
+    assert f["eligibility"] == "invalid" and f["problems"] == ["warnings[1] is not a string or a {code, message} object"]
+    assert [w["code"] for w in f["warnings"]] == ["ALIASING_NOT_EXCLUDED"]  # the good item is still listed
+    assert f["frequency_error"] is None and r["comparison_valid"] is False
+    text = json.dumps(r, allow_nan=False)
+    assert LEAK not in text  # the bad value is never copied
+
+
+def test_warnings_that_are_not_a_list_are_invalid():
+    for value in ("one warning", warning("DROPPED_FRAMES"), None, 3):
+        a = assess(frame_record(warnings=value), "frame")
+        assert a["eligibility"] == "invalid" and a["problems"] == ["warnings is not a list"] and a["warnings"] == []
+
+
+def test_warning_format_changes_no_pairing_or_frequency_error():
+    as_string = ["ALIASING_NOT_EXCLUDED: a single frame rate cannot exclude aliasing", "DROPPED_FRAMES: 3 of 400"]
+    as_object = [warning("ALIASING_NOT_EXCLUDED", "a single frame rate cannot exclude aliasing"),
+                 warning("DROPPED_FRAMES", "3 of 400")]
+    for trials in ((None, None), ("T1", "T1"), ("T1", "T2")):
+        results = []
+        for items in (as_string, as_object):
+            f, e = frame_record(warnings=items), event_record()
+            for record, trial in zip((f, e), trials):
+                if trial:
+                    record["trial_id"] = trial
+            r = compare(f, e)
+            assert [(w["code"], w["significant"]) for w in r["frame"]["warnings"]] == [
+                ("ALIASING_NOT_EXCLUDED", False), ("DROPPED_FRAMES", True)]
+            r["frame"]["warnings"] = None  # only the text differs ("CODE: message" or the message)
+            results.append(r)
+        assert results[0] == results[1]
+    r = paired(frame=frame_record(warnings=as_object))
+    assert r["pairing"]["status"] == "paired" and r["error_evidence"] == "paired_trial"
+    assert r["frame"]["frequency_error"]["signed_hz"] == pytest.approx(0.2) and r["comparison_valid"] is False
+
+
+def test_structured_warnings_are_not_mutated_shared_or_leaked():
+    f = frame_record(trial_id="T1", warnings=[warning("ALIASING_NOT_EXCLUDED"), "HOST_TIMESTAMPS: host clock"])
+    e = event_record(trial_id="T1", warnings=[warning("DEVICE_TICK_UNVERIFIED")])
+    f_before, e_before = copy.deepcopy(f), copy.deepcopy(e)
+    r = compare(f, e)
+    assert f == f_before and e == e_before
+    r["frame"]["warnings"][0]["code"] = "CHANGED"
+    r["event"]["warnings"][0]["text"] = "CHANGED"
+    assert f == f_before and e == e_before  # the output shares no warning dict with the inputs
+    text = json.dumps(compare(f, e), allow_nan=False)
+    assert FAKE_SERIAL not in text and "serial" not in text
+    assert json.loads(text) == compare(f, e)
 
 
 def test_mismatched_reference_frequencies_are_incompatible():
@@ -334,6 +468,190 @@ def test_no_hardware_mcp_network_or_model_imports():
     assert not [m for m in loaded if m.startswith(forbidden)]
 
 
+# ---- frame-count acquisition requests (DV-H05C): the Frame Lab asks for N frames, not for a duration ----
+
+def frame_count_record(frames=400, samples=None, actual_s=2.0, early_stop=False, **changes):
+    """A Frame Lab record that requested `frames` frames (requested_s null); 400 frames at 200 fps = 2.0 s."""
+    acquisition = {"acquisition.request_mode": "frame_count", "acquisition.requested_frames": frames,
+                   "acquisition.requested_s": None, "acquisition.actual_s": actual_s,
+                   "acquisition.samples": frames if samples is None else samples, "acquisition.early_stop": early_stop}
+    return frame_record(**{**acquisition, **changes})
+
+
+def test_event_duration_record_is_unchanged_and_needs_no_frame_count_fields():
+    e = event_record()
+    assert "request_mode" not in e["acquisition"] and "requested_frames" not in e["acquisition"]
+    a = assess(e, "event")
+    assert a["eligibility"] == "valid" and a["problems"] == []
+    assert a["acquisition"]["request_mode"] == "duration" and a["acquisition"]["requested_s"] == 2.0
+    assert a["acquisition"]["requested_frames"] is None and a["acquisition"]["request_completed"] is None
+    a = assess(event_record(**{"acquisition.request_mode": "duration"}), "event")  # declared: the same
+    assert a["eligibility"] == "valid" and a["acquisition"]["request_mode"] == "duration"
+
+
+def test_legacy_frame_record_with_positive_requested_s_is_still_accepted():
+    a = assess(frame_record(), "frame")
+    assert a["eligibility"] == "valid" and a["problems"] == []
+    assert a["acquisition"]["request_mode"] == "duration" and a["acquisition"]["requested_s"] == 2.0
+    assert a["acquisition"]["requested_frames"] is None
+
+
+def test_completed_frame_count_record_is_valid():
+    f = frame_count_record()
+    a = assess(f, "frame")
+    assert a["eligibility"] == "valid" and a["problems"] == [] and a["reasons"] == []
+    assert a["acquisition"]["request_mode"] == "frame_count" and a["acquisition"]["requested_s"] is None
+    assert a["acquisition"]["requested_frames"] == 400 and a["acquisition"]["samples"] == 400
+    assert a["acquisition"]["request_completed"] is True and a["acquisition"]["actual_s"] == 2.0
+    assert a["frequency_error"]["signed_hz"] == pytest.approx(0.2)
+
+
+def test_short_complete_128_frame_recording_stays_provisional():
+    a = assess(frame_count_record(frames=128, actual_s=0.64), "frame")  # 128 frames at 200 fps
+    assert a["problems"] == [] and a["acquisition"]["request_completed"] is True
+    assert a["eligibility"] == "provisional" and a["reasons"] == ["SHORT_RECORDING"]
+    assert comparison.MIN_DURATION_S == 1.0  # the threshold is unchanged
+
+
+@pytest.mark.parametrize("mode", [_DELETE, "duration"])
+def test_null_requested_s_without_frame_count_mode_is_invalid(mode):
+    f = frame_record(**{"acquisition.requested_s": None})
+    if mode is _DELETE:
+        assert "request_mode" not in f["acquisition"]
+    else:
+        f["acquisition"]["request_mode"] = mode
+    a = assess(f, "frame")
+    assert a["eligibility"] == "invalid" and "acquisition.requested_s is null" in a["problems"]
+
+
+@pytest.mark.parametrize("requested_s", [2.0, 0.0, math.nan, "2"])
+def test_frame_count_with_a_requested_s_value_is_invalid(requested_s):
+    a = assess(frame_count_record(**{"acquisition.requested_s": requested_s}), "frame")
+    assert a["eligibility"] == "invalid" and a["acquisition"]["requested_s"] is None
+    json.dumps(a, allow_nan=False)
+
+
+def test_frame_count_without_requested_frames_is_invalid():
+    f = frame_count_record()
+    del f["acquisition"]["requested_frames"]
+    a = assess(f, "frame")
+    assert a["eligibility"] == "invalid" and a["problems"] == ["acquisition.requested_frames is missing"]
+    assert a["frequency_error"] is None
+
+
+@pytest.mark.parametrize("frames, problem", [
+    (0, "acquisition.requested_frames must be > 0"), (-128, "acquisition.requested_frames must be > 0"),
+    (True, "acquisition.requested_frames is not a whole number (bool)"),
+    (False, "acquisition.requested_frames is not a whole number (bool)"),
+    (128.0, "acquisition.requested_frames is not a whole number (float)"),
+    (2.5, "acquisition.requested_frames is not a whole number (float)"),
+    (math.nan, "acquisition.requested_frames is not a whole number (float)"),
+    ("128", "acquisition.requested_frames is not a whole number (str)"),
+    (None, "acquisition.requested_frames is not a whole number (NoneType)"),
+    ([128], "acquisition.requested_frames is not a whole number (list)"),
+])
+def test_bad_requested_frames_is_invalid(frames, problem):
+    a = assess(frame_count_record(samples=1, early_stop=True, **{"acquisition.requested_frames": frames}), "frame")
+    assert a["eligibility"] == "invalid" and a["problems"] == [problem]
+    assert a["acquisition"]["requested_frames"] is None and a["acquisition"]["request_completed"] is None
+    json.dumps(a, allow_nan=False)
+
+
+@pytest.mark.parametrize("samples, early_stop, problem", [
+    (100, False, "acquisition.early_stop is false but samples is less than requested_frames"),
+    (0, False, "acquisition.early_stop is false but samples is less than requested_frames"),
+    (401, False, "acquisition.samples is more than acquisition.requested_frames"),
+    (401, True, "acquisition.samples is more than acquisition.requested_frames"),
+    (400, True, "acquisition.early_stop is true but samples equals requested_frames"),
+])
+def test_contradictory_completion_metadata_is_invalid(samples, early_stop, problem):
+    a = assess(frame_count_record(samples=samples, early_stop=early_stop), "frame")
+    assert a["eligibility"] == "invalid" and a["problems"] == [problem]
+    assert a["acquisition"]["request_completed"] is None
+
+
+def test_early_stopped_frame_count_is_provisional_and_not_complete():
+    a = assess(frame_count_record(samples=300, actual_s=1.5, early_stop=True), "frame")
+    assert a["problems"] == [] and a["acquisition_status"] == "ok"  # status ok is not a proof of completion
+    assert a["acquisition"]["request_completed"] is False and a["acquisition"]["samples"] == 300
+    assert a["eligibility"] == "provisional" and a["reasons"] == ["EARLY_STOP"]
+    assert a["f0_hz"] == 50.2 and a["frequency_error"] is not None  # the result is kept
+    assert paired(frame=frame_count_record(samples=300, early_stop=True))["comparison_valid"] is False
+
+
+@pytest.mark.parametrize("mode", ["FRAME_COUNT", "frames", "", None, 1, True, ["frame_count"], {"m": "frame_count"}])
+def test_unknown_request_mode_is_invalid(mode):
+    a = assess(frame_count_record(**{"acquisition.request_mode": mode}), "frame")
+    assert a["eligibility"] == "invalid" and a["acquisition"]["request_mode"] is None
+    assert "acquisition.request_mode is not 'duration' or 'frame_count'" in a["problems"]
+
+
+def test_frame_count_fields_in_an_event_record_are_invalid():
+    a = assess(event_record(**{"acquisition.request_mode": "frame_count", "acquisition.requested_s": None,
+                               "acquisition.requested_frames": 128}), "event")
+    assert a["eligibility"] == "invalid"
+    assert "acquisition.request_mode 'frame_count' is only for Frame Lab records" in a["problems"]
+    a = assess(event_record(**{"acquisition.requested_frames": 128}), "event")  # a duration request with a count
+    assert a["problems"] == ["acquisition.requested_frames is given but request_mode is not 'frame_count'"]
+    a = assess(event_record(**{"acquisition.requested_frames": None}), "event")  # null: no count, accepted
+    assert a["eligibility"] == "valid"
+
+
+def test_frame_count_failed_recovery_is_a_measurement_result_not_a_schema_error():
+    a = assess(frame_count_record(**{"estimate.f0_hz": None}), "frame")
+    assert a["problems"] == [] and a["eligibility"] == "not_recoverable" and a["reasons"] == ["F0_NOT_DETECTED"]
+    a = assess(frame_count_record(**{"estimate.f0_hz": 37.0}), "frame")
+    assert a["eligibility"] == "valid" and a["frequency_error"]["signed_hz"] == pytest.approx(-13.0)
+
+
+def test_frame_count_10hz_paired_comparison():
+    f = frame_count_record(frames=128, actual_s=2.56, **{"source.reference_hz": 10, "acquisition.fps": 50.0,
+                                                          "estimate.f0_hz": 10.1, "estimate.resolution_hz": 0.39})
+    e = event_record(**{"source.reference_hz": 10, "estimate.f0_hz": 10.2, "estimate.resolution_hz": 0.5})
+    r = paired(frame=f, event=e)
+    assert r["reference_check"] == "match" and r["reference_hz"] == 10 and r["comparison_valid"] is True
+    assert r["frame"]["frequency_error"]["signed_hz"] == pytest.approx(0.1)
+    assert r["event"]["frequency_error"]["signed_hz"] == pytest.approx(0.2)
+    assert r["frame"]["acquisition"]["nyquist_hz"] == 25.0
+    assert r["frame"]["f0_hz"] == 10.1  # never corrected
+
+
+@pytest.mark.parametrize("fps", [100.0, 30.0])  # Nyquist 50 (equal) and 15 Hz
+def test_frame_count_nyquist_safeguard(fps):
+    a = assess(frame_count_record(**{"acquisition.fps": fps, "estimate.f0_hz": 50.0}), "frame")
+    assert a["problems"] == [] and a["eligibility"] == "not_recoverable"
+    assert "REFERENCE_AT_OR_ABOVE_NYQUIST" in a["reasons"] and a["warnings"][0]["significant"] is True
+    assert a["acquisition"]["expected_alias_hz"] == pytest.approx(abs(50.0 - fps * round(50.0 / fps)))
+
+
+def test_frame_count_warning_normalization():
+    w = [warning("ALIASING_NOT_EXCLUDED", "one fps"), "DROPPED_FRAMES: 2 of 400"]
+    a = assess(frame_count_record(warnings=w), "frame")
+    assert a["warnings"] == [{"code": "ALIASING_NOT_EXCLUDED", "text": "one fps", "significant": False},
+                             {"code": "DROPPED_FRAMES", "text": w[1], "significant": True}]
+    assert a["eligibility"] == "provisional" and a["reasons"] == ["SIGNIFICANT_WARNING"]
+
+
+def test_frame_count_trial_matching_and_mismatch():
+    assert paired(frame=frame_count_record())["pairing"]["status"] == "paired"
+    r = compare(frame_count_record(trial_id="T1"), event_record(trial_id="T2"))
+    assert r["pairing"]["status"] == "trial_mismatch" and r["comparison_valid"] is False
+    r = compare(frame_count_record(), event_record())
+    assert r["pairing"]["status"] == "unpaired" and r["error_evidence"] == "unpaired_evidence"
+
+
+def test_frame_count_output_is_sanitized_and_explains_the_request():
+    f, e = frame_count_record(trial_id="T1"), event_record(trial_id="T1")
+    f_before, e_before = copy.deepcopy(f), copy.deepcopy(e)
+    r = compare(f, e)
+    assert f == f_before and e == e_before
+    text = json.dumps(r, allow_nan=False)
+    assert FAKE_SERIAL not in text and "serial" not in text and json.loads(text) == r
+    assert {k: r["frame"]["acquisition"][k] for k in ("request_mode", "requested_frames", "requested_s")} == {
+        "request_mode": "frame_count", "requested_frames": 400, "requested_s": None}
+    assert r["event"]["acquisition"]["request_mode"] == "duration"
+
+
 BASELINES = sorted((PROJECT_ROOT / "report" / "lumen").glob("*.json"))
 
 
@@ -345,5 +663,10 @@ def test_real_event_lab_baselines_read_only():
         a = assess(record, "event")
         assert a["eligibility"] == "provisional" and a["problems"] == []  # accepted, all hit the event cap
         assert "EARLY_STOP" in a["reasons"] and a["f0_status"] == "measured"
+        assert "request_mode" not in record["acquisition"] and "requested_frames" not in record["acquisition"]
+        assert a["acquisition"]["request_mode"] == "duration" and a["acquisition"]["requested_s"] == 2.0
+        assert a["acquisition"]["requested_frames"] is None and a["acquisition"]["request_completed"] is None
+        assert str(record["hardware"]["serial"]) not in json.dumps(compare(frame_count_record(), record))
+        assert a["warnings"] == [{"code": None, "text": t, "significant": True} for t in record["warnings"]]
         assert str(record["hardware"]["serial"]) not in json.dumps(compare(frame_record(), record))
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest  # the file is unchanged

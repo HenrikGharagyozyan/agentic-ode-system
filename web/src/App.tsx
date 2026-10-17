@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { listExperiments } from "./api";
 import { CameraPanel } from "./components/CameraPanel";
+import { DualVisionPanel } from "./components/DualVisionPanel";
 import { ExperimentPanel } from "./components/ExperimentPanel";
 import { Header } from "./components/Header";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -12,9 +13,18 @@ import { useExperiment } from "./hooks/useExperiment";
 
 const idFromHash = () => /^#\/experiments\/(\d{8}-\d{6})$/.exec(window.location.hash)?.[1] ?? null;
 
+type View = "eventlab" | "dualvision";
+const VIEWS: { id: View; label: string }[] = [
+  { id: "eventlab", label: "Event Lab" },
+  { id: "dualvision", label: "Dual-Vision" },
+];
+
 export default function App() {
   const status = useBackendStatus();
   const online = status.health !== null;
+  // which view is shown; NOT in the URL hash. Both views stay mounted (hidden, not removed), so switching never
+  // stops the experiment stream, a pending approval or a Dual-Vision comparison.
+  const [view, setView] = useState<View>("eventlab");
   const [currentId, setCurrentId] = useState<string | null>(idFromHash);
   useEffect(() => {
     // the open experiment is in the URL (#/experiments/<id>): a reload or a shared link opens it again
@@ -53,6 +63,20 @@ export default function App() {
   return (
     <div className="app">
       <Header status={status} onRefresh={status.refresh} />
+      <nav className="tabs view-switch" role="tablist" aria-label="views">
+        {VIEWS.map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            role="tab"
+            aria-selected={view === v.id}
+            className={`tab${view === v.id ? " tab-on" : ""}`}
+            onClick={() => setView(v.id)}
+          >
+            {v.label}
+          </button>
+        ))}
+      </nav>
       {!online && !status.loading && (
         <Notice
           tone="error"
@@ -69,7 +93,7 @@ export default function App() {
           Start it with <code>python -m agentic_ode.web</code>. No camera data is shown until it answers.
         </Notice>
       )}
-      <main className="layout">
+      <main className="layout" hidden={view !== "eventlab"}>
         <aside className="col-side">
           <CameraPanel camera={camera} online={online} onChanged={status.refresh} />
           {online && (
@@ -103,6 +127,9 @@ export default function App() {
           />
         </div>
       </main>
+      <div className="dv-view" hidden={view !== "dualvision"}>
+        <DualVisionPanel />
+      </div>
     </div>
   );
 }

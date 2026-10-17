@@ -994,3 +994,57 @@ textarea:focus,
 a.btn {
   text-decoration: none;
 }
+
+/* ---- view switch and LUMEN Dual-Vision (recorded data only) ---- */
+
+.view-switch {
+  margin-top: calc(-1 * var(--gap) / 2);
+}
+.layout[hidden],
+.dv-view[hidden] {
+  display: none; /* .layout sets display: grid, which would otherwise win over the hidden attribute */
+}
+.dv-view {
+  margin-top: var(--gap);
+}
+.dv-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap);
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .dv-grid {
+    grid-template-columns: minmax(0, 1fr); /* Frame and Event cards stack */
+  }
+}
+.dv-picker {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.dv-picker input[type="file"] {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-2);
+  max-width: 100%;
+}
+.dv-card h4 {
+  margin: 4px 0 0;
+}
+.dv-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+.dv-warning {
+  display: grid;
+  gap: 2px;
+}
+.dv-warning-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}

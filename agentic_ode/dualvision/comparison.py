@@ -6,7 +6,8 @@ model calls, and the input dicts are never changed. The output has no raw events
 Eligibility of one record (the first group that matches wins, in this order; all matching reasons are kept):
 - invalid: the record is not a well-formed lumen.flicker.v1 result of this lab: wrong schema, lab or sample_kind;
   a required field is missing or has the wrong type; a number is not finite or is negative, or is zero where it
-  must be positive (reference_hz, requested_s, actual_s, fps, exposure_us, f0_hz, resolution_hz).
+  must be positive (reference_hz, requested_s, actual_s, fps, exposure_us, f0_hz, resolution_hz); or the
+  acquisition request below is malformed or contradicts itself.
 - not_recoverable: the frequency cannot be read from this record:
   REFERENCE_AT_OR_ABOVE_NYQUIST (frame only, fps known: reference_hz >= fps / 2, even if f0 seems to match), or
   F0_NOT_DETECTED (f0_hz is null: a legitimate "no flicker found"; its acquisition status is kept as it is).
@@ -14,12 +15,26 @@ Eligibility of one record (the first group that matches wins, in this order; all
   EARLY_STOP, SHORT_RECORDING (actual_s < 1 s), RESOLUTION_UNKNOWN, FPS_UNKNOWN and EXPOSURE_UNKNOWN (frame only;
   Nyquist is then not checked), HARMONIC_AMBIGUITY (f0 within resolution_hz of k * reference_hz or reference_hz / k,
   k = 2..15), ACQUISITION_STATUS_NOT_OK (status is not "ok"), SIGNIFICANT_WARNING.
-  Every Event Lab warning is significant. A Frame Lab warning is significant unless its code (the text before the
-  first ":") is in FRAME_INFORMATIONAL_WARNINGS and reference_hz is strictly below a known Nyquist.
+  Every Event Lab warning is significant. A Frame Lab warning is significant unless its code is in
+  FRAME_INFORMATIONAL_WARNINGS and reference_hz is strictly below a known Nyquist.
 - valid: none of the above.
+
+Acquisition request (acquisition.request_mode):
+- "duration" (also when request_mode is absent, as in every Event Lab record and older Frame Lab records):
+  requested_s must be > 0 and requested_frames, if present, must be null.
+- "frame_count" (Frame Lab only): requested_frames is an integer > 0 (true/false is not a count), requested_s is
+  null, actual_s is the measured duration and samples the frames acquired. samples must equal requested_frames
+  when early_stop is false, and be less than it when early_stop is true; anything else is invalid.
+  request_completed is true only for all requested frames without early stop; status "ok" is never a proof of it.
+  A complete frame_count recording is still SHORT_RECORDING when actual_s < MIN_DURATION_S.
 
 Eligibility judges the quality of the measurement, not its result: a valid record whose f0_hz is far from
 reference_hz is a real sensor failure, shown by its frequency error, not an invalid input.
+
+Warnings: a list whose items are strings (Event Lab, older records) or objects with exactly a non-empty string
+"code" and "message" (Frame Lab), mixed in any order. Each one becomes {"code", "text", "significant"}. A string's code
+is the text before the first ":" only if that is an upper-case code such as DROPPED_FRAMES; otherwise code is None
+(never invented). Any other item makes the record invalid; the good items are still listed.
 """
 
 from __future__ import annotations
@@ -36,7 +51,9 @@ SNR_DEFINITIONS = {
     "frame": "spectral power ratio, Frame Lab DV-01",
 }
 FRAME_INFORMATIONAL_WARNINGS = frozenset({"ALIASING_NOT_EXCLUDED"})  # DV-01 always gives it
+WARNING_KEYS = frozenset({"code", "message"})  # the only keys of a structured warning
 PUBLIC_HARDWARE_FIELDS = ("model", "sensor", "real")  # hardware.serial is never copied
+REQUEST_MODES = ("duration", "frame_count")  # what the lab asked for: a recording time or a number of frames
 MIN_DURATION_S = 1.0  # shorter recordings give a coarse frequency resolution
 MAX_HARMONIC = 15  # the highest k tested by the harmonic-ambiguity check
 
@@ -94,6 +111,32 @@ def _text(record: dict, path: str, problems: list[str]) -> str | None:
     return None
 
 
+def _is_code(text: str) -> bool:
+    """True for an upper-case warning code such as ALIASING_NOT_EXCLUDED: A-Z first, then only A-Z, 0-9 and _."""
+    return bool(text) and "A" <= text[0] <= "Z" and all("A" <= c <= "Z" or "0" <= c <= "9" or c == "_" for c in text)
+
+
+def _warnings(record: dict, problems: list[str]) -> list[dict]:
+    """The record's warnings as {"code", "text"}, in their order. A string keeps its text; its code is the text before
+    the first ":" if that is a code, else None. An object must have exactly a non-empty string code and message (text
+    is the message). Every other item adds a problem (its value is not copied) and is left out."""
+    raw = record.get("warnings", [])  # missing: already a problem
+    if not isinstance(raw, list):
+        problems.append("warnings is not a list")
+        return []
+    result = []
+    for i, item in enumerate(raw):
+        if isinstance(item, str):
+            head = item.split(":", 1)[0].strip()
+            result.append({"code": head if _is_code(head) else None, "text": item})
+        elif (isinstance(item, dict) and set(item) == WARNING_KEYS
+              and all(isinstance(item[k], str) and item[k].strip() for k in WARNING_KEYS)):
+            result.append({"code": item["code"], "text": item["message"]})
+        else:
+            problems.append(f"warnings[{i}] is not a string or a {{code, message}} object")
+    return result
+
+
 def _harmonic_relation(f0: float, reference: float, tolerance: float) -> dict | None:
     """The first k (2..MAX_HARMONIC) with f0 within tolerance of k * reference ("harmonic") or of reference / k
     ("subharmonic"); None if there is none. A match is only a hint of harmonic confusion, never a proof."""
@@ -134,27 +177,62 @@ def assess(record: dict, lab: str) -> dict:
     source_type = _text(record, "source.type", problems)
     set_by = _text(record, "source.set_by", problems)
     reference = _number(record, "source.reference_hz", problems)
-    requested_s = _number(record, "acquisition.requested_s", problems)
+    request_mode = _get(record, "acquisition.request_mode")
+    if request_mode is _MISSING:
+        request_mode = "duration"  # older records: a duration request, as their positive requested_s says
+    elif request_mode not in REQUEST_MODES:  # also a non-string; the bad value is not copied
+        problems.append("acquisition.request_mode is not 'duration' or 'frame_count'")
+        request_mode = None
+    elif request_mode == "frame_count" and lab != "frame":
+        problems.append("acquisition.request_mode 'frame_count' is only for Frame Lab records")
+    requested_s = _number(record, "acquisition.requested_s", problems, nullable=request_mode == "frame_count")
+    if request_mode == "frame_count" and requested_s is not None:
+        problems.append("acquisition.requested_s must be null for a frame_count request")
+        requested_s = None
     actual_s = _number(record, "acquisition.actual_s", problems)
     samples = _number(record, "acquisition.samples", problems, positive=False)
     if samples is not None and samples != int(samples):
         problems.append("acquisition.samples is not a whole number")
+        samples = None
     fps = _number(record, "acquisition.fps", problems, nullable=True)
     exposure_us = _number(record, "acquisition.exposure_us", problems, nullable=True)
     early_stop = _get(record, "acquisition.early_stop")
     if not isinstance(early_stop, bool):
         problems.append("acquisition.early_stop is not true or false")
         early_stop = None
+    requested_frames = _get(record, "acquisition.requested_frames")
+    request_completed = None  # judged only for a frame_count request, from the counts, never from status
+    if request_mode == "frame_count":
+        if requested_frames is _MISSING:
+            problems.append("acquisition.requested_frames is missing")
+            requested_frames = None
+        elif isinstance(requested_frames, bool) or not isinstance(requested_frames, int):
+            problems.append(f"acquisition.requested_frames is not a whole number "
+                            f"({type(requested_frames).__name__})")
+            requested_frames = None
+        elif requested_frames <= 0:
+            problems.append("acquisition.requested_frames must be > 0")
+            requested_frames = None
+        if requested_frames is not None and samples is not None:
+            if samples > requested_frames:
+                problems.append("acquisition.samples is more than acquisition.requested_frames")
+            elif early_stop is False and samples != requested_frames:
+                problems.append("acquisition.early_stop is false but samples is less than requested_frames")
+            elif early_stop is True and samples == requested_frames:
+                problems.append("acquisition.early_stop is true but samples equals requested_frames")
+            elif early_stop is not None:
+                request_completed = not early_stop
+    else:
+        if requested_frames not in (_MISSING, None):  # a duration request has no frame count
+            problems.append("acquisition.requested_frames is given but request_mode is not 'frame_count'")
+        requested_frames = None
     f0 = _number(record, "estimate.f0_hz", problems, nullable=True)
     resolution = _number(record, "estimate.resolution_hz", problems, nullable=True)
     snr = _number(record, "estimate.snr", problems, nullable=True, positive=False)
     hardware = record.get("hardware")
     if "hardware" in record and not isinstance(hardware, dict):
         problems.append("hardware is not a JSON object")
-    raw_warnings = record.get("warnings", [])  # missing: already a problem above
-    if not (isinstance(raw_warnings, list) and all(isinstance(w, str) for w in raw_warnings)):
-        problems.append("warnings is not a list of strings")
-        raw_warnings = []
+    warnings = _warnings(record, problems)
     trial_id = record.get("trial_id")  # optional, set outside both labs; anything but a non-empty string is ignored
     trial_id = trial_id if isinstance(trial_id, str) and trial_id else None
 
@@ -162,10 +240,8 @@ def assess(record: dict, lab: str) -> dict:
     nyquist = fps / 2 if lab == "frame" and fps is not None else None
     below_nyquist = nyquist is not None and reference is not None and reference < nyquist
     alias = abs(reference - fps * round(reference / fps)) if nyquist is not None and reference is not None else None
-    warnings = []
-    for text in raw_warnings:
-        informational = lab == "frame" and text.split(":", 1)[0].strip() in FRAME_INFORMATIONAL_WARNINGS
-        warnings.append({"text": text, "significant": not (informational and below_nyquist)})
+    for w in warnings:  # informational only for a frame code in the list, below a measured Nyquist
+        w["significant"] = not (lab == "frame" and w["code"] in FRAME_INFORMATIONAL_WARNINGS and below_nyquist)
     harmonic = None
     if f0 is not None and reference is not None and resolution is not None:
         harmonic = _harmonic_relation(f0, reference, resolution)
@@ -227,7 +303,9 @@ def assess(record: dict, lab: str) -> dict:
         "source": {"type": source_type, "set_by": set_by},
         "reference_hz": reference,
         "acquisition_status": status,
-        "acquisition": {"requested_s": requested_s, "actual_s": actual_s, "samples": samples,
+        "acquisition": {"request_mode": request_mode, "requested_s": requested_s,
+                        "requested_frames": requested_frames, "request_completed": request_completed,
+                        "actual_s": actual_s, "samples": samples,
                         "sample_kind": sample_kind, "fps": fps, "exposure_us": exposure_us,
                         "early_stop": early_stop, "nyquist_hz": nyquist, "expected_alias_hz": alias},
         "f0_hz": f0,
