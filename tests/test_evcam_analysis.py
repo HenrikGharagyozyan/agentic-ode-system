@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from agentic_ode.hardware.devices.evcam.analysis import (
+    _base_of_strongest,
     brightness_curve,
     delta_image,
     edge_delta_images,
@@ -38,6 +39,38 @@ def blinking_light(f_hz, seconds, rng, events_per_edge=20, jitter_us=200, noise=
     p = np.concatenate([np.ones(t_on.size), np.zeros(t_off.size), rng.integers(0, 2, noise)])
     t = np.clip(t, 0, seconds * 1e6 - 1).astype(np.int64)
     return make_events(rng.integers(0, 1280, t.size), rng.integers(0, 720, t.size), p, t)
+
+
+def modulated_light(f_hz, fm_hz, depth, seconds, rng, events_per_edge=200, jitter_us=300, duty=1 / 6, slow=30_000,
+                    noise=20_000):
+    """A light at f_hz whose brightness changes at fm_hz (events per edge * (1 + depth * sin)): this gives the
+    sidebands f_hz +- fm_hz. Plus `slow` events of a weak second flicker at fm_hz (ON while sin > 0, else OFF)."""
+    period = 1e6 / f_hz
+    rising = np.arange(0, seconds * 1e6 - period, period)
+    n = np.round(events_per_edge * (1 + depth * np.sin(2 * np.pi * fm_hz * rising / 1e6))).astype(np.int64)
+    t_on = np.repeat(rising, n) + rng.normal(0, jitter_us, n.sum())
+    t_off = t_on + duty * period
+    t_slow = rng.uniform(0, seconds * 1e6, slow)
+    t_noise = rng.uniform(0, seconds * 1e6, noise)
+    t = np.concatenate([t_on, t_off, t_slow, t_noise])
+    p = np.concatenate([np.ones(t_on.size), np.zeros(t_off.size), np.sin(2 * np.pi * fm_hz * t_slow / 1e6) > 0,
+                        rng.integers(0, 2, noise)])
+    t = np.clip(t, 0, seconds * 1e6 - 1).astype(np.int64)
+    return make_events(rng.integers(0, 1280, t.size), rng.integers(0, 720, t.size), p, t)
+
+
+def line_spectrum(lines, resolution=0.5, fmax_hz=2000.0):
+    """A hand-made amplitude spectrum without noise: 1 in every bin (the noise floor), and amp at the bin nearest to
+    each frequency of lines = {hz: amp}."""
+    amp = np.ones(int(fmax_hz / resolution) + 1)
+    for hz, a in lines.items():
+        amp[round(hz / resolution)] = a
+    return amp
+
+
+def base_of(amp, resolution=0.5):
+    # floor 1, fmin 2 Hz, fmax 2000 Hz, min_snr 8: like spectrum(fmin_hz=2) on the hand-made spectrum
+    return _base_of_strongest(amp, resolution, int(np.argmax(amp)), 1.0, 2.0, 2000.0, 8.0)
 
 
 # ---- summary ----
@@ -183,6 +216,89 @@ def test_spectrum_pure_sine_keeps_its_frequency():
     s = spectrum(make_events(np.zeros(t.size), np.zeros(t.size), p, t), fmin_hz=2, fmax_hz=2000)
     assert abs(s["dominant_hz"] - 240) <= s["resolution_hz"]
     assert s["fundamental_hz"] == s["dominant_hz"]
+
+
+# ---- false subharmonics (real 50 Hz LED, 2026-10-17: 150.8 Hz strongest, 10.3 Hz was reported) ----
+
+@pytest.mark.parametrize("seed", range(4))
+def test_spectrum_genuine_10hz_square_wave_in_the_wide_band(seed):
+    # the band of event_export (2..2000 Hz); jitter 1 ms: the harmonics get weaker, like the real 10 Hz LED
+    s = spectrum(blinking_light(10, 2.0, np.random.default_rng(seed), events_per_edge=200, jitter_us=1000),
+                 fmin_hz=2, fmax_hz=2000)
+    assert abs(s["fundamental_hz"] - 10) <= s["resolution_hz"]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_spectrum_true_10hz_is_found_when_a_harmonic_is_strongest(seed):
+    # 10.3 Hz: the strongest peak is 5f (51.5 Hz), the divisor 51.5 / 5 has its own harmonics 3f, 7f, ...
+    s = spectrum(blinking_light(10.3, 2.0, np.random.default_rng(seed), events_per_edge=200, jitter_us=1000),
+                 fmin_hz=2, fmax_hz=2000)
+    assert abs(s["dominant_hz"] - 10.3) > 10  # the divisor path is really used
+    assert abs(s["fundamental_hz"] - 10.3) <= s["resolution_hz"]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_spectrum_50hz_with_a_dominant_third_harmonic(seed):
+    # 1/6 on-time: 3f is the strongest peak, 2f and 4f are strong too
+    s = spectrum(blinking_light(50, 2.0, np.random.default_rng(seed), events_per_edge=200, jitter_us=300, duty=1 / 6),
+                 fmin_hz=2, fmax_hz=2000)
+    assert abs(s["dominant_hz"] - 150) <= s["resolution_hz"]
+    assert abs(s["fundamental_hz"] - 50) <= s["resolution_hz"]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_spectrum_50hz_with_10hz_modulation_is_not_reported_as_10hz(seed):
+    # 151 / 15 = 10.07 Hz is near the 10.3 Hz flicker, and its multiples 40, 50, 60 Hz are the 50.3 Hz light and
+    # its sidebands: no evidence of its own. A near-50 Hz answer or no answer (unresolved) are both honest.
+    s = spectrum(modulated_light(50.3, 10.3, 0.6, 2.0, np.random.default_rng(seed)), fmin_hz=2, fmax_hz=2000)
+    res = s["resolution_hz"]
+    assert abs(s["dominant_hz"] - 151) <= res
+    f0 = s["fundamental_hz"]
+    assert f0 is None or abs(f0 - 50.3) <= res
+    if f0 is None:
+        assert s["harmonics"] == [] and "unresolved" in s["warning"]
+    assert len(s["peaks"]) == 5  # the peaks are still all reported
+
+
+def test_base_of_strongest_needs_evidence_of_its_own():
+    # 60 Hz family (3f strongest) and a weaker 12.3 Hz flicker with sidebands 60 +- 12.3 and 180 + 12.3: the divisor
+    # 180 / 15 = 12 Hz has a line (12.5 Hz bin) and strong multiples, but they belong to 60 Hz or are sidebands
+    family = {60: 60, 120: 90, 180: 100, 240: 80, 300: 50}
+    side = {12.3: 30, 47.7: 30, 72.3: 30, 192.3: 30}
+    f0, candidates = base_of(line_spectrum({**family, **side}))
+    assert f0 is None and 12.0 in candidates  # unresolved: 12 Hz is not proven, and not silently dropped
+    # without the sidebands, 60 Hz is the base: 60, 120, 240, 300 are not explained by 180 Hz
+    assert base_of(line_spectrum(family)) == (60.0, [])
+
+
+def test_base_of_strongest_finds_a_true_low_base():
+    # a sharp 12 Hz square wave: odd harmonics of the same height, 7f is the strongest
+    lines = {12 * n: 50 for n in range(1, 30, 2)}
+    lines[84] = 60
+    assert base_of(line_spectrum(lines)) == (12.0, [])
+
+
+def test_spectrum_two_unrelated_families_stay_unresolved():
+    # 60 Hz (1/4 on) and 40 Hz (1/6 on): both have 120 Hz as their strongest harmonic. 60 and 40 Hz both explain
+    # it, and 20 Hz has no line: no single fundamental
+    rng = np.random.default_rng(0)
+    ev = np.sort(np.concatenate([blinking_light(60, 2.0, rng, events_per_edge=200, jitter_us=50, duty=0.25),
+                                 blinking_light(40, 2.0, rng, events_per_edge=200, jitter_us=50, duty=1 / 6)]),
+                 order="t")
+    s = spectrum(ev, fmin_hz=2, fmax_hz=2000)
+    assert abs(s["dominant_hz"] - 120) <= s["resolution_hz"]
+    assert s["fundamental_hz"] is None and s["harmonics"] == []
+    assert s["warning"].startswith("the fundamental is unresolved")
+    assert s["peaks"][0]["hz"] == s["dominant_hz"]
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_spectrum_sharp_10hz_in_the_wide_band_is_never_a_wrong_frequency(seed):
+    # sharp edges up to 2000 Hz: the strongest peak can be 33f, above the largest divisor 15. Seed 2 gave 30 Hz
+    # before; now the answer is 10 Hz or unresolved
+    s = spectrum(blinking_light(10, 2.0, np.random.default_rng(seed), events_per_edge=200, jitter_us=50),
+                 fmin_hz=2, fmax_hz=2000)
+    assert s["fundamental_hz"] is None or abs(s["fundamental_hz"] - 10) <= s["resolution_hz"]
 
 
 def test_spectrum_warns_about_short_recordings():
