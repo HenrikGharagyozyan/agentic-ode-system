@@ -20,7 +20,7 @@ N_HARMONICS = 5  # spectrum() reports the harmonics 2f .. 5f of the fundamental
 MIN_GOOD_SECONDS = 1.0  # spectrum() warns about shorter recordings (resolution coarser than 1 Hz)
 MAX_DIVISOR = 15  # _base_of_strongest() tests f_max / k for k = 2..15
 MAX_MULTIPLE = 9  # ... and the multiples n*f for n = 2..9
-MIN_MULTIPLES = 2  # ... of which at least 2 must be strong
+MIN_MULTIPLES = 2  # ... of which at least 2 must be strong (not counting the harmonics of f_max itself)
 EDGE_STEP_PART = 16  # edge_windows(): a step is the change of the curve over 1/16 period (real edges take 1-2 ms)
 EDGE_WINDOW_PART = 4  # ... and each window is 1/4 period wide, centred on the edge
 
@@ -92,36 +92,72 @@ def fundamental(peaks_hz: list[float], resolution: float) -> float | None:
 
 
 def _base_of_strongest(amp: np.ndarray, resolution: float, strongest: int, floor: float, fmin_hz: float,
-                       fmax_hz: float, min_snr: float) -> float | None:
+                       fmax_hz: float, min_snr: float) -> tuple[float | None, list[float]]:
     """The base frequency of a square wave, found from the divisors of the strongest peak (index `strongest`).
 
     A sharp square wave at f has odd harmonics 3f, 5f, 7f ... of almost the same height, so the strongest peak can
     be 7f, and f itself may not be among the N_PEAKS peaks (real LED at 10 Hz, 2026-10-16: 70 Hz was reported).
-    So test f = f_max / k for k = 2..MAX_DIVISOR (only f >= fmin_hz) on the whole spectrum: f is accepted if the
-    spectrum at f is strong (snr >= min_snr, +-1 bin) and at least MIN_MULTIPLES of n*f (n = 2..MAX_MULTIPLE,
-    up to fmax_hz) are strong too. Returns the frequency of the strongest bin near the LOWEST accepted f, or None.
+    But a divisor can also fit by chance (real 50 Hz LED, 2026-10-17: 150.8 Hz was strongest, and 150.8 / 15 Hz was
+    reported, because its "multiples" 50 Hz and 60 Hz were the LED itself and a sideband). So, with f_max the
+    strongest peak:
+    1. candidates: f_max, and f = f_max / k (k = 2..MAX_DIVISOR, only f >= fmin_hz) if the spectrum at f is strong
+       (snr >= min_snr, +-1 bin) and at least MIN_MULTIPLES of n*f (n = 2..MAX_MULTIPLE, up to fmax_hz) are strong.
+       Only n that are not multiples of k count: n*f = (n/k)*f_max is then a harmonic of f_max, no evidence for f.
+    2. a candidate f is proven if, for every candidate g = m*f above it, the strong lines that only f explains
+       (n*f with n not a multiple of m) are together at least as strong as the lines that g explains too.
+    3. a candidate that is not proven, or proven ones that are not all multiples of the lowest -> unresolved.
+    Returns (f0, []) with f0 the frequency of the strongest bin near the lowest proven f, (None, []) if f_max is
+    the only candidate, or (None, all candidates in Hz) if unresolved.
     """
-    def strong_bin(f):  # the largest bin within +-1 bin of f if it is strong, else None
+    def strong_bin(f, w=1):  # the largest bin within +-w bins of f if it is strong, else None
         c = round(f / resolution)
-        lo = max(c - 1, 0)
+        lo = max(c - w, 0)
         if lo >= amp.size:
             return None
-        j = lo + int(np.argmax(amp[lo: c + 2]))
+        j = lo + int(np.argmax(amp[lo: c + w + 1]))
         return j if amp[j] > 0 and amp[j] >= min_snr * floor else None
 
+    # 1. the candidates, k -> f_max / k
     f_max = strongest * resolution
-    best = None
+    candidates = {1: f_max}
     for k in range(2, MAX_DIVISOR + 1):
         f = f_max / k
         if f < fmin_hz:
             break  # k grows, so f only gets lower
-        j = strong_bin(f)
-        if j is None:
+        if strong_bin(f) is None:
             continue
-        multiples = [n * f for n in range(2, MAX_MULTIPLE + 1) if n * f <= fmax_hz]
-        if sum(strong_bin(m) is not None for m in multiples) >= MIN_MULTIPLES:
-            best = j * resolution  # a later k gives a lower f, so the last accepted one is the lowest
-    return best
+        own = [n * f for n in range(2, MAX_MULTIPLE + 1) if n % k and n * f <= fmax_hz]
+        if sum(strong_bin(m) is not None for m in own) >= MIN_MULTIPLES:
+            candidates[k] = f
+    if len(candidates) == 1:
+        return None, []
+
+    # 2. which candidates are proven; f_max has no candidate above it, so it is proven
+    proven = [1]
+    for k, f in candidates.items():
+        if k == 1:
+            continue
+        # the strong lines at n*f, n >= 1: f = f_max / k is known to +-resolution/(2k), so n*f to +-n/(2k) bins
+        lines = {}
+        for n in range(1, int(fmax_hz / f) + 1):
+            j = strong_bin(n * f, 1 + n // (2 * k))
+            if j is not None:
+                lines[n] = amp[j]
+        for g_k in candidates:
+            if g_k < k and k % g_k == 0:  # g = f_max / g_k = m*f
+                m = k // g_k
+                only_f = sum(a for n, a in lines.items() if n % m)
+                shared = sum(a for n, a in lines.items() if n % m == 0)  # > 0: f_max is always one of them
+                if only_f < shared:
+                    break
+        else:
+            proven.append(k)
+
+    # 3. one answer only if every candidate is proven and they all are multiples of the lowest
+    lowest = max(proven)  # the largest k is the lowest f
+    if len(proven) < len(candidates) or any(lowest % k for k in proven):
+        return None, [round(f, 3) for f in sorted(candidates.values())]
+    return strong_bin(candidates[lowest]) * resolution, []
 
 
 def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmin_hz: float = 20.0,
@@ -132,7 +168,8 @@ def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmi
     Signal: (ON events - OFF events) in each time bin of bin_us. It follows the change of the light, so a light
     that blinks at f usually gives its strongest peak at f. (The plain event count would show 2f for a symmetric
     blink.) But a harmonic can be stronger, so fundamental_hz (see _base_of_strongest() and fundamental()) is the
-    flicker frequency.
+    flicker frequency. If the strongest peak fits more than one base and the spectrum does not show which one,
+    fundamental_hz is None (unresolved), harmonics is empty and the "warning" names the candidates.
     Recordings shorter than MIN_GOOD_SECONDS get a "warning" (coarse resolution).
     Frequencies below fmin_hz (slow drift of the noise) and above fmax_hz are ignored.
     snr = amplitude / noise_floor, where noise_floor is the median amplitude in the band. A peak counts only if
@@ -207,9 +244,15 @@ def spectrum(events: np.ndarray, bin_us: int = 100, fmax_hz: float = 2000.0, fmi
     result["peaks"] = [{"hz": round(float(freq[i]), 3), "rel_amp": round(float(amp[i] / top), 3), "snr": snr(i)}
                        for i in peaks]
     # the flicker frequency: the strongest peak can be a harmonic (2f was strongest in a 0.17 s real recording,
-    # 7f in a real 10 Hz square wave). First the divisors of the strongest peak, then the peak list, then the peak.
-    f0 = (_base_of_strongest(amp, resolution, peaks[0], floor, fmin_hz, fmax_hz, min_snr)
-          or fundamental([float(freq[i]) for i in peaks], resolution) or float(freq[peaks[0]]))
+    # 7f in a real 10 Hz square wave). First the divisors of the strongest peak; if none of them is a candidate,
+    # the peak list, then the peak. Unresolved divisors -> no fundamental: the strongest peak may be a harmonic.
+    f0, unresolved = _base_of_strongest(amp, resolution, peaks[0], floor, fmin_hz, fmax_hz, min_snr)
+    if unresolved:
+        text = (f"the fundamental is unresolved: the strongest peak {result['dominant_hz']:g} Hz fits more than one "
+                f"base ({', '.join(f'{f:g}' for f in unresolved)} Hz) and the spectrum does not show which one")
+        result["warning"] = f"{result['warning']}; {text}" if "warning" in result else text
+        return result
+    f0 = f0 or fundamental([float(freq[i]) for i in peaks], resolution) or float(freq[peaks[0]])
     result["fundamental_hz"] = round(f0, 3)
 
     # harmonics of the fundamental: the largest value near k*f0; f0 is only known to +-resolution/2, so k*f0 to
